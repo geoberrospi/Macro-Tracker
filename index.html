@@ -1,1 +1,777 @@
 
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Daily Macronutrient and Weekly Weight Tracker</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f3f4f6;
+        }
+        .container {
+            max-width: 48rem;
+        }
+        .message-box {
+            display: none;
+            padding: 1rem;
+            margin-top: 1rem;
+            border-radius: 0.5rem;
+            text-align: center;
+            font-weight: bold;
+        }
+        .message-box.success {
+            background-color: #d1fae5;
+            color: #065f46;
+        }
+        .message-box.warning {
+            background-color: #fef3c7;
+            color: #92400e;
+        }
+        .loading-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(255, 255, 255, 0.7);
+            z-index: 100;
+            justify-content: center;
+            align-items: center;
+        }
+        .loading-spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3b82f6;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 101;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+            background-color: rgba(0,0,0,0.4);
+        }
+        .modal-content {
+            background-color: #fefefe;
+            margin: 15% auto;
+            padding: 20px;
+            border: 1px solid #888;
+            width: 80%;
+            max-width: 500px;
+            border-radius: 10px;
+            text-align: center;
+        }
+        .countdown-timer {
+            font-size: 1.5rem;
+            font-weight: bold;
+            transition: color 1s ease-in-out;
+        }
+        .countdown-label {
+            font-size: 0.75rem;
+            font-weight: normal;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 flex items-center justify-center min-h-screen p-4">
+    <div id="loading-overlay" class="loading-overlay">
+        <div class="loading-spinner"></div>
+    </div>
+
+    <div id="confirmation-modal" class="modal">
+        <div class="modal-content">
+            <p id="modal-text"></p>
+            <div class="mt-4">
+                <button id="modal-confirm-btn" class="bg-blue-500 text-white font-medium py-2 px-4 rounded-lg hover:bg-blue-600 transition-colors duration-200 mr-2">Confirm</button>
+                <button id="modal-cancel-btn" class="bg-gray-400 text-white font-medium py-2 px-4 rounded-lg hover:bg-gray-500 transition-colors duration-200">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="container mx-auto bg-white shadow-lg rounded-xl p-6 md:p-8">
+        <h1 class="text-3xl md:text-4xl font-bold text-gray-800 text-center mb-6">Daily Macro Tracker</h1>
+        
+        <p id="user-id-display" class="text-xs text-gray-500 text-center mb-4">User ID: <span id="user-id">Loading...</span></p>
+
+        <!-- Countdown Timer Section -->
+        <div class="bg-purple-50 p-4 md:p-6 rounded-lg mb-6 shadow-sm text-center">
+            <h2 class="text-xl font-semibold text-gray-700 mb-2">Countdown to Dec 29, 2025</h2>
+            <div id="countdown-timer" class="countdown-timer">
+                <span class="countdown-value">0</span><span class="countdown-label">d</span>
+                <span class="countdown-value">0</span><span class="countdown-label">h</span>
+                <span class="countdown-value">0</span><span class="countdown-label">m</span>
+                <span class="countdown-value">0</span><span class="countdown-label">s</span>
+            </div>
+        </div>
+
+        <!-- Target Macros Section -->
+        <div class="bg-indigo-50 p-4 md:p-6 rounded-lg mb-6 shadow-sm">
+            <h2 class="text-xl font-semibold text-gray-700 mb-4 text-center">Your Daily Goals</h2>
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 text-center">
+                <div class="bg-white p-4 rounded-lg shadow-sm border border-indigo-200">
+                    <p class="text-xs font-medium text-gray-500">Protein</p>
+                    <p id="target-protein" class="text-2xl font-bold text-indigo-600 mt-1">137g</p>
+                </div>
+                <div class="bg-white p-4 rounded-lg shadow-sm border border-indigo-200">
+                    <p class="text-xs font-medium text-gray-500">Carbs</p>
+                    <p id="target-carbs" class="text-2xl font-bold text-indigo-600 mt-1">307g</p>
+                </div>
+                <div class="bg-white p-4 rounded-lg shadow-sm border border-indigo-200">
+                    <p class="text-xs font-medium text-gray-500">Fat</p>
+                    <p id="target-fat" class="text-2xl font-bold text-indigo-600 mt-1">106g</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Adjust Goals Form -->
+        <div class="bg-blue-50 p-4 md:p-6 rounded-lg mb-6 shadow-sm">
+            <h2 class="text-xl font-semibold text-gray-700 mb-4 text-center">Adjust Your Goals</h2>
+            <form id="goal-form" class="space-y-4">
+                <div class="grid grid-cols-3 gap-4">
+                    <div>
+                        <label for="goal-protein" class="block text-sm font-medium text-gray-700">Protein (g)</label>
+                        <input type="number" id="goal-protein" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50" value="137">
+                    </div>
+                    <div>
+                        <label for="goal-carbs" class="block text-sm font-medium text-gray-700">Carbs (g)</label>
+                        <input type="number" id="goal-carbs" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50" value="307">
+                    </div>
+                    <div>
+                        <label for="goal-fat" class="block text-sm font-medium text-gray-700">Fat (g)</label>
+                        <input type="number" id="goal-fat" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50" value="106">
+                    </div>
+                </div>
+                <button type="submit" class="w-full bg-blue-500 text-white font-medium py-2 px-4 rounded-lg hover:bg-blue-600 transition-colors duration-200">Set New Goals</button>
+            </form>
+        </div>
+
+        <!-- Progress and Totals Section -->
+        <div class="bg-gray-50 p-4 md:p-6 rounded-lg mb-6 shadow-sm">
+            <h2 class="text-xl font-semibold text-gray-700 mb-4 text-center">Today's Progress</h2>
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 text-center">
+                <div class="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
+                    <p class="text-xs font-medium text-gray-500">Protein</p>
+                    <p id="total-protein" class="text-2xl font-bold text-gray-800 mt-1">0g</p>
+                </div>
+                <div class="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
+                    <p class="text-xs font-medium text-gray-500">Carbs</p>
+                    <p id="total-carbs" class="text-2xl font-bold text-gray-800 mt-1">0g</p>
+                </div>
+                <div class="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
+                    <p class="text-xs font-medium text-gray-500">Fat</p>
+                    <p id="total-fat" class="text-2xl font-bold text-gray-800 mt-1">0g</p>
+                </div>
+            </div>
+            <div class="mt-6 text-center space-x-4">
+                <button id="save-btn" class="bg-green-500 text-white font-medium py-2 px-4 rounded-lg hover:bg-green-600 transition-colors duration-200">Save Daily Log</button>
+                <button id="reset-btn" class="bg-red-500 text-white font-medium py-2 px-4 rounded-lg hover:bg-red-600 transition-colors duration-200">Reset</button>
+            </div>
+        </div>
+
+        <!-- Food Search Section -->
+        <div class="bg-yellow-50 p-4 md:p-6 rounded-lg mb-6 shadow-sm">
+            <h2 class="text-xl font-semibold text-gray-700 mb-4 text-center">Search for a Food</h2>
+            <form id="food-search-form" class="flex flex-col sm:flex-row gap-4">
+                <input type="text" id="food-search-input" class="flex-grow w-full sm:w-auto rounded-md border-gray-300 shadow-sm focus:border-yellow-300 focus:ring focus:ring-yellow-200 focus:ring-opacity-50 text-center sm:text-left" placeholder="e.g., Apple">
+                <button type="submit" class="w-full sm:w-auto bg-yellow-500 text-white font-medium py-2 px-4 rounded-lg hover:bg-yellow-600 transition-colors duration-200">Search</button>
+            </form>
+            <div id="food-search-result" class="mt-4 message-box"></div>
+        </div>
+
+        <!-- Add Food Form -->
+        <div class="bg-gray-50 p-4 md:p-6 rounded-lg mb-6 shadow-sm">
+            <h2 class="text-xl font-semibold text-gray-700 mb-4 text-center">Add a Food Item</h2>
+            <form id="food-form" class="space-y-4">
+                <div>
+                    <label for="food-name" class="block text-sm font-medium text-gray-700">Food Name</label>
+                    <input type="text" id="food-name" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50" placeholder="e.g., Chicken Breast">
+                </div>
+                <div class="grid grid-cols-3 gap-4">
+                    <div>
+                        <label for="food-protein" class="block text-sm font-medium text-gray-700">Protein (g)</label>
+                        <input type="number" id="food-protein" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50" value="0">
+                    </div>
+                    <div>
+                        <label for="food-carbs" class="block text-sm font-medium text-gray-700">Carbs (g)</label>
+                        <input type="number" id="food-carbs" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50" value="0">
+                    </div>
+                    <div>
+                        <label for="food-fat" class="block text-sm font-medium text-gray-700">Fat (g)</label>
+                        <input type="number" id="food-fat" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50" value="0">
+                    </div>
+                </div>
+                <button type="submit" class="w-full bg-indigo-500 text-white font-medium py-2 px-4 rounded-lg hover:bg-indigo-600 transition-colors duration-200">Add Food</button>
+            </form>
+        </div>
+
+        <!-- Macro Goal Checker Section -->
+        <div class="bg-indigo-50 p-4 md:p-6 rounded-lg mb-6 shadow-sm">
+            <h2 class="text-xl font-semibold text-gray-700 mb-4 text-center">Macro Goal Checker</h2>
+            <form id="checker-form" class="space-y-4">
+                <p class="text-center text-sm text-gray-600">Enter the macros of a food item to see if it fits your remaining goals.</p>
+                <div class="grid grid-cols-3 gap-4">
+                    <div>
+                        <label for="check-protein" class="block text-sm font-medium text-gray-700">Protein (g)</label>
+                        <input type="number" id="check-protein" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50" value="0">
+                    </div>
+                    <div>
+                        <label for="check-carbs" class="block text-sm font-medium text-gray-700">Carbs (g)</label>
+                        <input type="number" id="check-carbs" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50" value="0">
+                    </div>
+                    <div>
+                        <label for="check-fat" class="block text-sm font-medium text-gray-700">Fat (g)</label>
+                        <input type="number" id="check-fat" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50" value="0">
+                    </div>
+                </div>
+                <button type="submit" class="w-full bg-indigo-600 text-white font-medium py-2 px-4 rounded-lg hover:bg-indigo-700 transition-colors duration-200">Check Macros</button>
+            </form>
+            <div id="checker-result" class="message-box"></div>
+        </div>
+
+        <!-- Daily Log Section -->
+        <div class="bg-gray-50 p-4 md:p-6 rounded-lg mb-6 shadow-sm">
+            <h2 class="text-xl font-semibold text-gray-700 mb-4 text-center">Today's Log</h2>
+            <table class="min-w-full divide-y divide-gray-200 rounded-lg overflow-hidden shadow-sm">
+                <thead class="bg-gray-200">
+                    <tr>
+                        <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Food Item</th>
+                        <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">P</th>
+                        <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">C</th>
+                        <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">F</th>
+                    </tr>
+                </thead>
+                <tbody id="food-log" class="bg-white divide-y divide-gray-200">
+                    <!-- Log entries will be added here by JavaScript -->
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Weekly Weight Section -->
+        <div class="bg-green-50 p-4 md:p-6 rounded-lg mb-6 shadow-sm">
+            <h2 class="text-xl font-semibold text-gray-700 mb-4 text-center">Weekly Weight Tracker</h2>
+            <div class="flex flex-col sm:flex-row items-center justify-center gap-4 mb-4">
+                <input type="number" id="weight-input" class="flex-grow w-full sm:w-auto rounded-md border-gray-300 shadow-sm focus:border-green-300 focus:ring focus:ring-green-200 focus:ring-opacity-50 text-center sm:text-left" placeholder="Enter your weight (kg or lbs)">
+                <button id="save-weight-btn" class="w-full sm:w-auto bg-green-500 text-white font-medium py-2 px-4 rounded-lg hover:bg-green-600 transition-colors duration-200">Save Weight</button>
+            </div>
+            <table class="min-w-full divide-y divide-gray-200 rounded-lg overflow-hidden shadow-sm">
+                <thead class="bg-gray-200">
+                    <tr>
+                        <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
+                        <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Weight</th>
+                        <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Change</th>
+                    </tr>
+                </thead>
+                <tbody id="weight-log" class="bg-white divide-y divide-gray-200">
+                    <!-- Weight logs will be added here by JavaScript -->
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, getDoc, setDoc, onSnapshot, collection, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Firebase configuration
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        // Initialize Firebase
+        let app;
+        let db;
+        let auth;
+        let userId;
+
+        const loadingOverlay = document.getElementById('loading-overlay');
+        const userIdDisplay = document.getElementById('user-id');
+        const confirmationModal = document.getElementById('confirmation-modal');
+        const modalText = document.getElementById('modal-text');
+        const modalConfirmBtn = document.getElementById('modal-confirm-btn');
+        const modalCancelBtn = document.getElementById('modal-cancel-btn');
+        let modalCallback = null;
+
+        const showLoading = () => { loadingOverlay.style.display = 'flex'; };
+        const hideLoading = () => { loadingOverlay.style.display = 'none'; };
+
+        const showConfirmationModal = (message, callback) => {
+            modalText.textContent = message;
+            confirmationModal.style.display = 'block';
+            modalCallback = callback;
+        };
+
+        const hideConfirmationModal = () => {
+            confirmationModal.style.display = 'none';
+            modalCallback = null;
+        };
+
+        modalConfirmBtn.addEventListener('click', () => {
+            if (modalCallback) modalCallback(true);
+            hideConfirmationModal();
+        });
+
+        modalCancelBtn.addEventListener('click', () => {
+            if (modalCallback) modalCallback(false);
+            hideConfirmationModal();
+        });
+        
+        // Asynchronous initialization function
+        const initializeFirebase = async () => {
+            try {
+                showLoading();
+                app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } else {
+                    await signInAnonymously(auth);
+                }
+
+                userId = auth.currentUser.uid;
+                userIdDisplay.textContent = userId;
+                console.log("Firebase initialized and user signed in:", userId);
+
+                // Load all user data
+                await loadGoals();
+                await loadDailyLog();
+                await loadWeightLogs();
+
+            } catch (error) {
+                console.error("Error during Firebase initialization or sign-in:", error);
+            } finally {
+                hideLoading();
+            }
+        };
+
+        // DOM Elements
+        const foodForm = document.getElementById('food-form');
+        const foodNameInput = document.getElementById('food-name');
+        const foodProteinInput = document.getElementById('food-protein');
+        const foodCarbsInput = document.getElementById('food-carbs');
+        const foodFatInput = document.getElementById('food-fat');
+        const foodLogTable = document.getElementById('food-log');
+        const totalProteinElement = document.getElementById('total-protein');
+        const totalCarbsElement = document.getElementById('total-carbs');
+        const totalFatElement = document.getElementById('total-fat');
+        const resetBtn = document.getElementById('reset-btn');
+        const saveBtn = document.getElementById('save-btn');
+        const goalForm = document.getElementById('goal-form');
+        const goalProteinInput = document.getElementById('goal-protein');
+        const goalCarbsInput = document.getElementById('goal-carbs');
+        const goalFatInput = document.getElementById('goal-fat');
+        const checkerForm = document.getElementById('checker-form');
+        const checkProteinInput = document.getElementById('check-protein');
+        const checkCarbsInput = document.getElementById('check-carbs');
+        const checkFatInput = document.getElementById('check-fat');
+        const checkerResultDiv = document.getElementById('checker-result');
+        const targetProteinElement = document.getElementById('target-protein');
+        const targetCarbsElement = document.getElementById('target-carbs');
+        const targetFatElement = document.getElementById('target-fat');
+        const weightInput = document.getElementById('weight-input');
+        const saveWeightBtn = document.getElementById('save-weight-btn');
+        const weightLogTable = document.getElementById('weight-log');
+        const countdownTimer = document.getElementById('countdown-timer');
+        const foodSearchForm = document.getElementById('food-search-form');
+        const foodSearchInput = document.getElementById('food-search-input');
+        const foodSearchResultDiv = document.getElementById('food-search-result');
+
+
+        // State
+        let totalProtein = 0;
+        let totalCarbs = 0;
+        let totalFat = 0;
+        let foodLog = [];
+        let targetMacros = { protein: 137, carbs: 307, fat: 106 };
+        let weightLogs = [];
+
+        // Helper functions
+        const getCurrentDate = () => {
+            const today = new Date();
+            const yyyy = today.getFullYear();
+            const mm = String(today.getMonth() + 1).padStart(2, '0');
+            const dd = String(today.getDate()).padStart(2, '0');
+            return `${yyyy}-${mm}-${dd}`;
+        };
+
+        const updateTotals = () => {
+            totalProteinElement.textContent = `${totalProtein}g`;
+            totalCarbsElement.textContent = `${totalCarbs}g`;
+            totalFatElement.textContent = `${totalFat}g`;
+        };
+        
+        const updateGoalDisplay = () => {
+            targetProteinElement.textContent = `${targetMacros.protein}g`;
+            targetCarbsElement.textContent = `${targetMacros.carbs}g`;
+            targetFatElement.textContent = `${targetMacros.fat}g`;
+            goalProteinInput.value = targetMacros.protein;
+            goalCarbsInput.value = targetMacros.carbs;
+            goalFatInput.value = targetMacros.fat;
+        };
+
+        const renderFoodLog = () => {
+            foodLogTable.innerHTML = '';
+            foodLog.forEach(item => {
+                const newRow = document.createElement('tr');
+                newRow.innerHTML = `
+                    <td class="px-3 py-2 whitespace-nowrap text-sm font-medium text-gray-900">${item.name}</td>
+                    <td class="px-3 py-2 whitespace-nowrap text-sm text-gray-500">${item.protein}g</td>
+                    <td class="px-3 py-2 whitespace-nowrap text-sm text-gray-500">${item.carbs}g</td>
+                    <td class="px-3 py-2 whitespace-nowrap text-sm text-gray-500">${item.fat}g</td>
+                `;
+                foodLogTable.appendChild(newRow);
+            });
+            updateTotals();
+        };
+
+        const renderWeightLogs = () => {
+            weightLogTable.innerHTML = '';
+            // Sort weight logs by date in ascending order
+            weightLogs.sort((a, b) => new Date(a.date) - new Date(b.date));
+            let previousWeight = null;
+            weightLogs.forEach(item => {
+                let change = 'N/A';
+                if (previousWeight !== null) {
+                    const diff = item.weight - previousWeight;
+                    change = `${diff > 0 ? '+' : ''}${diff.toFixed(1)}`;
+                }
+                const newRow = document.createElement('tr');
+                newRow.innerHTML = `
+                    <td class="px-3 py-2 whitespace-nowrap text-sm font-medium text-gray-900">${item.date}</td>
+                    <td class="px-3 py-2 whitespace-nowrap text-sm text-gray-500">${item.weight}</td>
+                    <td class="px-3 py-2 whitespace-nowrap text-sm text-gray-500">${change}</td>
+                `;
+                weightLogTable.appendChild(newRow);
+                previousWeight = item.weight;
+            });
+        };
+
+        // Firestore Functions
+        const loadGoals = async () => {
+            try {
+                const docRef = doc(db, `/artifacts/${appId}/users/${userId}/goals`, 'dailyGoals');
+                const docSnap = await getDoc(docRef);
+                if (docSnap.exists()) {
+                    targetMacros = docSnap.data();
+                    console.log("Goals loaded:", targetMacros);
+                } else {
+                    console.log("No saved goals found, using defaults.");
+                }
+                updateGoalDisplay();
+            } catch (error) {
+                console.error("Error loading goals:", error);
+            }
+        };
+
+        const saveGoals = async (goals) => {
+            try {
+                showLoading();
+                const docRef = doc(db, `/artifacts/${appId}/users/${userId}/goals`, 'dailyGoals');
+                await setDoc(docRef, goals);
+                console.log("Goals saved successfully.");
+                targetMacros = goals;
+                updateGoalDisplay();
+            } catch (error) {
+                console.error("Error saving goals:", error);
+            } finally {
+                hideLoading();
+            }
+        };
+
+        const loadDailyLog = async () => {
+            try {
+                const date = getCurrentDate();
+                const docRef = doc(db, `/artifacts/${appId}/users/${userId}/logs`, date);
+                const docSnap = await getDoc(docRef);
+                if (docSnap.exists()) {
+                    const data = docSnap.data();
+                    totalProtein = data.totalProtein || 0;
+                    totalCarbs = data.totalCarbs || 0;
+                    totalFat = data.totalFat || 0;
+                    foodLog = data.foodLog || [];
+                    console.log("Daily log loaded:", data);
+                } else {
+                    console.log("No log found for today, starting fresh.");
+                    totalProtein = 0;
+                    totalCarbs = 0;
+                    totalFat = 0;
+                    foodLog = [];
+                }
+                renderFoodLog();
+            } catch (error) {
+                console.error("Error loading daily log:", error);
+            }
+        };
+
+        const saveDailyLog = async () => {
+            try {
+                showLoading();
+                const date = getCurrentDate();
+                const docRef = doc(db, `/artifacts/${appId}/users/${userId}/logs`, date);
+                const logData = {
+                    totalProtein,
+                    totalCarbs,
+                    totalFat,
+                    foodLog: foodLog
+                };
+                await setDoc(docRef, logData);
+                console.log("Daily log saved successfully!");
+            } catch (error) {
+                console.error("Error saving daily log:", error);
+            } finally {
+                hideLoading();
+            }
+        };
+
+        const saveWeightLog = async (weight) => {
+            try {
+                showLoading();
+                const date = getCurrentDate();
+                const docRef = doc(db, `/artifacts/${appId}/users/${userId}/weights`, date);
+                await setDoc(docRef, { weight: weight, date: date });
+                console.log("Weight saved successfully!");
+                await loadWeightLogs(); // Reload logs to show the new entry
+            } catch (error) {
+                console.error("Error saving weight log:", error);
+            } finally {
+                hideLoading();
+            }
+        };
+
+        const loadWeightLogs = async () => {
+            try {
+                const weightsCollectionRef = collection(db, `/artifacts/${appId}/users/${userId}/weights`);
+                const querySnapshot = await getDocs(weightsCollectionRef);
+                weightLogs = [];
+                querySnapshot.forEach((doc) => {
+                    weightLogs.push(doc.data());
+                });
+                console.log("Weight logs loaded:", weightLogs);
+                renderWeightLogs();
+            } catch (error) {
+                console.error("Error loading weight logs:", error);
+            }
+        };
+
+        // Countdown Timer Function
+        const updateCountdown = () => {
+            const countdownDate = new Date("December 29, 2025 00:00:00").getTime();
+            const now = new Date().getTime();
+            const distance = countdownDate - now;
+
+            const days = Math.floor(distance / (1000 * 60 * 60 * 24));
+            const hours = Math.floor((distance % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+            const minutes = Math.floor((distance % (1000 * 60 * 60)) / (1000 * 60));
+            const seconds = Math.floor((distance % (1000 * 60)) / 1000);
+
+            if (distance < 0) {
+                clearInterval(countdownInterval);
+                countdownTimer.innerHTML = "Countdown Finished!";
+            } else {
+                countdownTimer.innerHTML = `
+                    <span class="countdown-value">${days}</span><span class="countdown-label">d</span>
+                    <span class="countdown-value">${hours}</span><span class="countdown-label">h</span>
+                    <span class="countdown-value">${minutes}</span><span class="countdown-label">m</span>
+                    <span class="countdown-value">${seconds}</span><span class="countdown-label">s</span>
+                `;
+                
+                // Color change logic
+                const totalDuration = new Date("December 29, 2025 00:00:00").getTime() - new Date("August 11, 2025 00:00:00").getTime();
+                const elapsed = now - new Date("August 11, 2025 00:00:00").getTime();
+                const progress = elapsed / totalDuration;
+                
+                // Hue shifts from green (120) to red (0)
+                const hue = 120 - (120 * progress);
+                countdownTimer.style.color = `hsl(${hue}, 70%, 40%)`;
+            }
+        };
+
+        // Event listeners
+        goalForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const newProtein = parseFloat(goalProteinInput.value) || 0;
+            const newCarbs = parseFloat(goalCarbsInput.value) || 0;
+            const newFat = parseFloat(goalFatInput.value) || 0;
+            await saveGoals({ protein: newProtein, carbs: newCarbs, fat: newFat });
+        });
+
+        foodSearchForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const foodQuery = foodSearchInput.value.trim();
+            if (!foodQuery) {
+                foodSearchResultDiv.textContent = 'Please enter a food to search.';
+                foodSearchResultDiv.classList.remove('success');
+                foodSearchResultDiv.classList.add('warning');
+                foodSearchResultDiv.style.display = 'block';
+                return;
+            }
+
+            // Using placeholder API key and ID. You would need to replace these with your own.
+            const API_ID = "YOUR_APP_ID"; // Replace with your Edamam API App ID
+            const API_KEY = "YOUR_APP_KEY"; // Replace with your Edamam API Key
+
+            if (API_ID === "YOUR_APP_ID" || API_KEY === "YOUR_APP_KEY") {
+                foodSearchResultDiv.innerHTML = 'Please sign up for a free Edamam API key and replace "YOUR_APP_ID" and "YOUR_APP_KEY" in the code.';
+                foodSearchResultDiv.classList.remove('success');
+                foodSearchResultDiv.classList.add('warning');
+                foodSearchResultDiv.style.display = 'block';
+                return;
+            }
+
+            const url = `https://api.edamam.com/api/food-database/v2/parser?ingr=${encodeURIComponent(foodQuery)}&app_id=${API_ID}&app_key=${API_KEY}`;
+            
+            showLoading();
+            foodSearchResultDiv.style.display = 'none';
+
+            try {
+                const response = await fetch(url);
+                const data = await response.json();
+
+                if (data.hints && data.hints.length > 0) {
+                    const food = data.hints[0].food;
+                    const nutrients = food.nutrients;
+
+                    // Assuming 100g serving for simplicity
+                    const protein = (nutrients.PROCNT || 0);
+                    const carbs = (nutrients.CHOCDF || 0);
+                    const fat = (nutrients.FAT || 0);
+
+                    // Pre-fill the add food form
+                    foodNameInput.value = food.label;
+                    foodProteinInput.value = protein.toFixed(1);
+                    foodCarbsInput.value = carbs.toFixed(1);
+                    foodFatInput.value = fat.toFixed(1);
+
+                    foodSearchResultDiv.innerHTML = `Found data for **${food.label}** (per 100g). Values have been pre-filled below.`;
+                    foodSearchResultDiv.classList.remove('warning');
+                    foodSearchResultDiv.classList.add('success');
+                    foodSearchResultDiv.style.display = 'block';
+
+                } else {
+                    foodSearchResultDiv.textContent = 'No results found. Please try a different search term.';
+                    foodSearchResultDiv.classList.remove('success');
+                    foodSearchResultDiv.classList.add('warning');
+                    foodSearchResultDiv.style.display = 'block';
+                }
+            } catch (error) {
+                console.error('Error fetching food data:', error);
+                foodSearchResultDiv.textContent = 'An error occurred while fetching food data.';
+                foodSearchResultDiv.classList.remove('success');
+                foodSearchResultDiv.classList.add('warning');
+                foodSearchResultDiv.style.display = 'block';
+            } finally {
+                hideLoading();
+            }
+        });
+
+        foodForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const foodName = foodNameInput.value || 'Unnamed Food';
+            const protein = parseFloat(foodProteinInput.value) || 0;
+            const carbs = parseFloat(foodCarbsInput.value) || 0;
+            const fat = parseFloat(foodFatInput.value) || 0;
+            
+            const newFoodItem = { name: foodName, protein, carbs, fat };
+            foodLog.push(newFoodItem);
+            
+            totalProtein += protein;
+            totalCarbs += carbs;
+            totalFat += fat;
+
+            renderFoodLog();
+            
+            foodNameInput.value = '';
+            foodProteinInput.value = '0';
+            foodCarbsInput.value = '0';
+            foodFatInput.value = '0';
+        });
+
+        checkerForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const checkProtein = parseFloat(checkProteinInput.value) || 0;
+            const checkCarbs = parseFloat(checkCarbsInput.value) || 0;
+            const checkFat = parseFloat(checkFatInput.value) || 0;
+            const remainingProtein = targetMacros.protein - totalProtein;
+            const remainingCarbs = targetMacros.carbs - totalCarbs;
+            const remainingFat = targetMacros.fat - totalFat;
+            let message = '';
+            let isOver = false;
+
+            if (checkProtein > remainingProtein) {
+                message += `Protein: Exceeds remaining goal by ${Math.abs(remainingProtein - checkProtein).toFixed(1)}g.<br>`;
+                isOver = true;
+            } else {
+                message += `Protein: Within goal. Remaining ${Math.abs(remainingProtein - checkProtein).toFixed(1)}g.<br>`;
+            }
+            if (checkCarbs > remainingCarbs) {
+                message += `Carbs: Exceeds remaining goal by ${Math.abs(remainingCarbs - checkCarbs).toFixed(1)}g.<br>`;
+                isOver = true;
+            } else {
+                message += `Carbs: Within goal. Remaining ${Math.abs(remainingCarbs - checkCarbs).toFixed(1)}g.<br>`;
+            }
+            if (checkFat > remainingFat) {
+                message += `Fat: Exceeds remaining goal by ${Math.abs(remainingFat - checkFat).toFixed(1)}g.<br>`;
+                isOver = true;
+            } else {
+                message += `Fat: Within goal. Remaining ${Math.abs(remainingFat - checkFat).toFixed(1)}g.<br>`;
+            }
+
+            checkerResultDiv.innerHTML = message;
+            checkerResultDiv.classList.remove('success', 'warning');
+            checkerResultDiv.classList.add(isOver ? 'warning' : 'success');
+            checkerResultDiv.style.display = 'block';
+        });
+
+        resetBtn.addEventListener('click', () => {
+            showConfirmationModal("Are you sure you want to reset today's log? This cannot be undone.", (confirmed) => {
+                if (confirmed) {
+                    totalProtein = 0;
+                    totalCarbs = 0;
+                    totalFat = 0;
+                    foodLog = [];
+                    foodLogTable.innerHTML = '';
+                    checkerResultDiv.style.display = 'none';
+                    updateTotals();
+                    console.log("Daily log has been reset.");
+                }
+            });
+        });
+
+        saveBtn.addEventListener('click', async () => {
+            await saveDailyLog();
+        });
+
+        saveWeightBtn.addEventListener('click', async () => {
+            const weight = parseFloat(weightInput.value);
+            if (isNaN(weight) || weight <= 0) {
+                showConfirmationModal("Please enter a valid weight.", (confirmed) => {});
+                return;
+            }
+            await saveWeightLog(weight);
+            weightInput.value = '';
+        });
+
+        // Initialize on page load.
+        initializeFirebase();
+        // Start countdown timer
+        updateCountdown();
+        const countdownInterval = setInterval(updateCountdown, 1000);
+    </script>
+</body>
+</html>
+"Initial commit of the macro tracker app"
