@@ -38,14 +38,22 @@
     <script type="module">
         // Import necessary Firebase libraries
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, setDoc, collection, onSnapshot, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         
-        // These global variables are provided by the environment.
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
-        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+        // Your Firebase project configuration
+        const firebaseConfig = {
+            apiKey: "AIzaSyDLdU8lH81GfJ-ECXNn9be-RSVM4Qb7TNA",
+            authDomain: "fitness-tracker-4a53d.firebaseapp.com",
+            projectId: "fitness-tracker-4a53d",
+            storageBucket: "fitness-tracker-4a53d.firebasestorage.app",
+            messagingSenderId: "368173630360",
+            appId: "1:368173630360:web:da7c2f8fa3ce1c4a8921ed",
+            measurementId: "G-MG371PXKL4"
+        };
         
+        const appId = firebaseConfig.projectId;
+
         // Global state variables
         let user = null;
         let isAuthReady = false;
@@ -452,11 +460,7 @@
                 user = currentUser;
             } else {
                 try {
-                    if (initialAuthToken) {
-                        await signInWithCustomToken(auth, initialAuthToken);
-                    } else {
-                        await signInAnonymously(auth);
-                    }
+                    await signInAnonymously(auth);
                     user = auth.currentUser;
                 } catch (error) {
                     console.error("Authentication error:", error);
