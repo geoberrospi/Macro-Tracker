@@ -10,10 +10,10 @@
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
         body {
             font-family: 'Inter', sans-serif;
-            background-color: #0f172a; /* Dark background */
+            background-color: #f1f5f9; /* Light gray background */
         }
         .loading-animation {
-            border: 4px solid #1f2937;
+            border: 4px solid #e2e8f0;
             border-top: 4px solid #6366f1;
             border-radius: 50%;
             width: 40px;
@@ -25,18 +25,18 @@
             100% { transform: rotate(360deg); }
         }
         .card {
-            border: 1px solid #374151;
-            background-color: #1e293b;
+            border: 1px solid #e2e8f0;
+            background-color: #ffffff;
         }
     </style>
 </head>
 <body>
-    <div id="root"></div>
+    <div id="root" class="min-h-screen bg-slate-100 flex flex-col items-center p-4">
+        <!-- The app content will be rendered here -->
+    </div>
 
     <script type="module">
-        // Importing React, ReactDOM, and Firebase libraries from CDNs.
-        import React, { useState, useEffect } from 'https://unpkg.com/react@18/umd/react.development.js';
-        import ReactDOM from 'https://unpkg.com/react-dom@18/umd/react-dom.development.js';
+        // Import necessary Firebase libraries
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, setDoc, collection, onSnapshot, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
@@ -46,66 +46,440 @@
         const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
         
+        // Global state variables
+        let user = null;
+        let isAuthReady = false;
+        let view = 'dashboard';
+        let macroGoals = { protein: 137, carbs: 307, fat: 106 };
+        let dailyMacros = { protein: 0, carbs: 0, fat: 0 };
+        let meals = [];
+        let weightLog = [];
+        let measurementsLog = [];
+        let message = '';
+        const root = document.getElementById('root');
+
         // Initialize Firebase services
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
         const db = getFirestore(app);
 
-        // Main application component
-        function App() {
-            const [user, setUser] = useState(null);
-            const [isAuthReady, setIsAuthReady] = useState(false);
-            const [view, setView] = useState('dashboard');
-            const [macroGoals, setMacroGoals] = useState({ protein: 137, carbs: 307, fat: 106 });
-            const [dailyMacros, setDailyMacros] = useState({ protein: 0, carbs: 0, fat: 0 });
-            const [meals, setMeals] = useState([]);
-            const [weightLog, setWeightLog] = useState([]);
-            const [measurementsLog, setMeasurementsLog] = useState([]);
-            const [message, setMessage] = useState('');
-            const [inputMeal, setInputMeal] = useState({ name: '', protein: '', carbs: '', fat: '' });
-            const [inputWeight, setInputWeight] = useState('');
-            const [inputMeasurements, setInputMeasurements] = useState({ chest: '', waist: '', thigh: '' });
+        // --- Utility Functions ---
+        function showMessage(msg, type = 'info') {
+            message = msg;
+            renderApp(); // Re-render to show the message
+            setTimeout(() => {
+                message = '';
+                renderApp(); // Re-render to hide the message
+            }, 3000);
+        }
 
-            // Effect hook for authentication
-            useEffect(() => {
-                const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
-                    if (currentUser) {
-                        setUser(currentUser);
+        function calculateCountdown(targetDate) {
+            const now = new Date();
+            const target = new Date(targetDate);
+            const diff = target - now;
+            if (diff <= 0) return { days: 0, hours: 0, minutes: 0, seconds: 0 };
+            const seconds = Math.floor((diff / 1000) % 60);
+            const minutes = Math.floor((diff / 1000 / 60) % 60);
+            const hours = Math.floor((diff / (1000 * 60 * 60)) % 24);
+            const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+            return { days, hours, minutes, seconds };
+        }
+
+        // --- Event Handlers ---
+        async function handleUpdateMacroGoals(e) {
+            e.preventDefault();
+            const form = e.target;
+            const newProtein = Number(form.protein.value);
+            const newCarbs = Number(form.carbs.value);
+            const newFat = Number(form.fat.value);
+
+            if (!user) {
+                showMessage('Please wait for authentication to complete.');
+                return;
+            }
+            const userId = auth.currentUser.uid;
+            const userDocRef = doc(db, `/artifacts/${appId}/users/${userId}`);
+            try {
+                await setDoc(userDocRef, { macroGoals: { protein: newProtein, carbs: newCarbs, fat: newFat } }, { merge: true });
+                showMessage('Macro goals updated successfully!');
+            } catch (e) {
+                console.error("Error updating macro goals: ", e);
+                showMessage('Failed to update macro goals.');
+            }
+        }
+        
+        async function handleAddMeal(e) {
+            e.preventDefault();
+            const form = e.target;
+            const name = form.mealName.value;
+            const protein = Number(form.protein.value);
+            const carbs = Number(form.carbs.value);
+            const fat = Number(form.fat.value);
+
+            if (!name || !protein || !carbs || !fat) {
+                showMessage('Please fill out all meal fields.');
+                return;
+            }
+            if (!user) {
+                showMessage('Please wait for authentication to complete.');
+                return;
+            }
+            const userId = auth.currentUser.uid;
+            const mealsColRef = collection(db, `/artifacts/${appId}/users/${userId}/meals`);
+            try {
+                await addDoc(mealsColRef, { name, protein, carbs, fat, timestamp: serverTimestamp() });
+                form.reset();
+                showMessage('Meal added successfully!');
+            } catch (e) {
+                console.error("Error adding meal:", e);
+                showMessage('Failed to add meal.');
+            }
+        }
+
+        async function handleAddWeight(e) {
+            e.preventDefault();
+            const weightInput = e.target.weight;
+            const weight = Number(weightInput.value);
+            if (!weight) {
+                showMessage('Please enter a weight.');
+                return;
+            }
+            if (!user) {
+                showMessage('Please wait for authentication to complete.');
+                return;
+            }
+            const userId = auth.currentUser.uid;
+            const weightsColRef = collection(db, `/artifacts/${appId}/users/${userId}/weights`);
+            try {
+                await addDoc(weightsColRef, { weight, date: new Date().toISOString().split('T')[0], timestamp: serverTimestamp() });
+                weightInput.value = '';
+                showMessage('Weight added successfully!');
+            } catch (e) {
+                console.error("Error adding weight:", e);
+                showMessage('Failed to add weight.');
+            }
+        }
+
+        async function handleAddMeasurements(e) {
+            e.preventDefault();
+            const form = e.target;
+            const chest = Number(form.chest.value);
+            const waist = Number(form.waist.value);
+            const thigh = Number(form.thigh.value);
+            if (!chest || !waist || !thigh) {
+                showMessage('Please enter all measurements.');
+                return;
+            }
+            if (!user) {
+                showMessage('Please wait for authentication to complete.');
+                return;
+            }
+            const userId = auth.currentUser.uid;
+            const measurementsColRef = collection(db, `/artifacts/${appId}/users/${userId}/measurements`);
+            try {
+                await addDoc(measurementsColRef, { chest, waist, thigh, date: new Date().toISOString().split('T')[0], timestamp: serverTimestamp() });
+                form.reset();
+                showMessage('Measurements added successfully!');
+            } catch (e) {
+                console.error("Error adding measurements:", e);
+                showMessage('Failed to add measurements.');
+            }
+        }
+
+        // --- Renderer Functions ---
+        function createCountdownElement(targetDate, title, id) {
+            const container = document.createElement('div');
+            container.className = "flex flex-col items-center p-4 rounded-lg shadow-md w-full card";
+            container.innerHTML = `
+                <h3 class="text-xl font-bold mb-2 text-indigo-600">${title}</h3>
+                <div class="flex justify-center space-x-4 text-gray-800" id="${id}">
+                    <!-- Countdown numbers will be injected here -->
+                </div>
+            `;
+            
+            const updateCountdown = () => {
+                const time = calculateCountdown(targetDate);
+                const countdownEl = container.querySelector(`#${id}`);
+                if (countdownEl) {
+                     countdownEl.innerHTML = `
+                        <div class="flex flex-col items-center">
+                            <span class="text-4xl font-bold">${time.days}</span>
+                            <span class="text-sm text-gray-500">Days</span>
+                        </div>
+                        <div class="flex flex-col items-center">
+                            <span class="text-4xl font-bold">${time.hours}</span>
+                            <span class="text-sm text-gray-500">Hours</span>
+                        </div>
+                        <div class="flex flex-col items-center">
+                            <span class="text-4xl font-bold">${time.minutes}</span>
+                            <span class="text-sm text-gray-500">Minutes</span>
+                        </div>
+                        <div class="flex flex-col items-center">
+                            <span class="text-4xl font-bold">${time.seconds}</span>
+                            <span class="text-sm text-gray-500">Seconds</span>
+                        </div>
+                    `;
+                }
+            };
+
+            updateCountdown();
+            setInterval(updateCountdown, 1000);
+            return container;
+        }
+
+        function renderDashboard() {
+            const content = document.createElement('div');
+            content.className = "space-y-6";
+            content.appendChild(createCountdownElement("2025-12-29T00:00:00", "Time until Wedding", "countdown-wedding"));
+            const quote = document.createElement('div');
+            quote.className = "rounded-xl shadow-md p-6 text-center card";
+            quote.innerHTML = `<p class="text-xl font-semibold italic text-indigo-600">"You can do it. Every small step forward is a victory."</p>`;
+            content.appendChild(quote);
+            content.appendChild(createCountdownElement("2025-10-31T00:00:00", "Time until Josh's Wedding", "countdown-josh-wedding"));
+            return content;
+        }
+
+        function renderMacros() {
+            const content = document.createElement('div');
+            content.className = "space-y-6 text-gray-800";
+            
+            const messageEl = message ? `<div class="p-3 bg-blue-100 text-blue-800 rounded-lg text-sm text-center card">${message}</div>` : '';
+            
+            content.innerHTML = `
+                <h2 class="text-2xl font-bold text-center text-indigo-600">Macro Tracker</h2>
+                <p class="text-gray-500 text-sm text-center">User ID: ${user?.uid}</p>
+                ${messageEl}
+                <div class="rounded-xl shadow-md p-4 card">
+                    <h3 class="text-lg font-semibold mb-2">My Daily Macro Goals</h3>
+                    <form id="macroGoalsForm" class="flex flex-col space-y-2">
+                        <div class="grid grid-cols-3 gap-2">
+                            <div>
+                                <label class="text-xs text-gray-500">Protein (g)</label>
+                                <input name="protein" type="number" value="${macroGoals.protein}" class="w-full border border-gray-300 rounded-md p-2 bg-slate-100 text-gray-800" />
+                            </div>
+                            <div>
+                                <label class="text-xs text-gray-500">Carbs (g)</label>
+                                <input name="carbs" type="number" value="${macroGoals.carbs}" class="w-full border border-gray-300 rounded-md p-2 bg-slate-100 text-gray-800" />
+                            </div>
+                            <div>
+                                <label class="text-xs text-gray-500">Fat (g)</label>
+                                <input name="fat" type="number" value="${macroGoals.fat}" class="w-full border border-gray-300 rounded-md p-2 bg-slate-100 text-gray-800" />
+                            </div>
+                        </div>
+                        <button type="submit" class="w-full bg-indigo-600 text-white rounded-md py-2 hover:bg-indigo-700 transition duration-300">Update Goals</button>
+                    </form>
+                </div>
+                <div class="rounded-xl shadow-md p-4 card">
+                    <h3 class="text-lg font-semibold mb-2">Today's Progress</h3>
+                    <div class="grid grid-cols-3 gap-2 text-center">
+                        <div>
+                            <span class="text-2xl font-bold">${dailyMacros.protein}g</span> / <span class="text-gray-500">${macroGoals.protein}g</span>
+                            <p class="text-sm text-gray-500">Protein</p>
+                        </div>
+                        <div>
+                            <span class="text-2xl font-bold">${dailyMacros.carbs}g</span> / <span class="text-gray-500">${macroGoals.carbs}g</span>
+                            <p class="text-sm text-gray-500">Carbs</p>
+                        </div>
+                        <div>
+                            <span class="text-2xl font-bold">${dailyMacros.fat}g</span> / <span class="text-gray-500">${macroGoals.fat}g</span>
+                            <p class="text-sm text-gray-500">Fat</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="rounded-xl shadow-md p-4 card">
+                    <h3 class="text-lg font-semibold mb-2">Add a Meal</h3>
+                    <form id="addMealForm" class="flex flex-col space-y-2">
+                        <input name="mealName" type="text" placeholder="Meal Name (e.g., Chicken Salad)" class="w-full border border-gray-300 rounded-md p-2 bg-slate-100 text-gray-800" />
+                        <div class="grid grid-cols-3 gap-2">
+                            <input name="protein" type="number" placeholder="Protein (g)" class="w-full border border-gray-300 rounded-md p-2 bg-slate-100 text-gray-800" />
+                            <input name="carbs" type="number" placeholder="Carbs (g)" class="w-full border border-gray-300 rounded-md p-2 bg-slate-100 text-gray-800" />
+                            <input name="fat" type="number" placeholder="Fat (g)" class="w-full border border-gray-300 rounded-md p-2 bg-slate-100 text-gray-800" />
+                        </div>
+                        <button type="submit" class="w-full bg-green-600 text-white rounded-md py-2 hover:bg-green-700 transition duration-300">Log Meal</button>
+                    </form>
+                    <div class="mt-4">
+                        <h4 class="font-semibold">Logged Meals:</h4>
+                        <ul id="mealsList" class="text-sm mt-2 space-y-1"></ul>
+                    </div>
+                </div>
+            `;
+            // Add event listeners after the elements are in the DOM
+            setTimeout(() => {
+                const macroGoalsForm = document.getElementById('macroGoalsForm');
+                if (macroGoalsForm) macroGoalsForm.addEventListener('submit', handleUpdateMacroGoals);
+                const addMealForm = document.getElementById('addMealForm');
+                if (addMealForm) addMealForm.addEventListener('submit', handleAddMeal);
+                const mealsList = document.getElementById('mealsList');
+                meals.forEach(meal => {
+                    const li = document.createElement('li');
+                    li.className = "flex justify-between items-center bg-slate-100 p-2 rounded-md";
+                    li.innerHTML = `<span>${meal.name}</span><span class="text-xs text-gray-500">P:${meal.protein} C:${meal.carbs} F:${meal.fat}</span>`;
+                    mealsList.appendChild(li);
+                });
+            }, 0);
+            
+            return content;
+        }
+
+        function renderWeights() {
+            const content = document.createElement('div');
+            content.className = "space-y-6 text-gray-800";
+            const messageEl = message ? `<div class="p-3 bg-blue-100 text-blue-800 rounded-lg text-sm text-center card">${message}</div>` : '';
+            content.innerHTML = `
+                <h2 class="text-2xl font-bold text-center text-indigo-600">Weight Tracker</h2>
+                <p class="text-gray-500 text-sm text-center">User ID: ${user?.uid}</p>
+                ${messageEl}
+                <div class="rounded-xl shadow-md p-4 card">
+                    <h3 class="text-lg font-semibold mb-2">Log New Weight</h3>
+                    <form id="addWeightForm" class="flex flex-col space-y-2">
+                        <input name="weight" type="number" placeholder="Enter weight in lbs" class="w-full border border-gray-300 rounded-md p-2 bg-slate-100 text-gray-800" />
+                        <button type="submit" class="w-full bg-indigo-600 text-white rounded-md py-2 hover:bg-indigo-700 transition duration-300">Add Weight</button>
+                    </form>
+                </div>
+                <div class="rounded-xl shadow-md p-4 card">
+                    <h3 class="text-lg font-semibold mb-2">Weight History</h3>
+                    <ul id="weightList" class="space-y-1"></ul>
+                </div>
+            `;
+            setTimeout(() => {
+                const addWeightForm = document.getElementById('addWeightForm');
+                if (addWeightForm) addWeightForm.addEventListener('submit', handleAddWeight);
+                const weightList = document.getElementById('weightList');
+                weightLog.forEach(log => {
+                    const li = document.createElement('li');
+                    li.className = "flex justify-between p-2 bg-slate-100 rounded-md";
+                    li.innerHTML = `<span>${log.date}</span><span class="font-semibold">${log.weight} lbs</span>`;
+                    weightList.appendChild(li);
+                });
+            }, 0);
+            return content;
+        }
+
+        function renderMeasurements() {
+            const content = document.createElement('div');
+            content.className = "space-y-6 text-gray-800";
+            const messageEl = message ? `<div class="p-3 bg-blue-100 text-blue-800 rounded-lg text-sm text-center card">${message}</div>` : '';
+            content.innerHTML = `
+                <h2 class="text-2xl font-bold text-center text-indigo-600">Measurements Tracker</h2>
+                <p class="text-gray-500 text-sm text-center">User ID: ${user?.uid}</p>
+                ${messageEl}
+                <div class="rounded-xl shadow-md p-4 card">
+                    <h3 class="text-lg font-semibold mb-2">Log New Measurements</h3>
+                    <form id="addMeasurementsForm" class="flex flex-col space-y-2">
+                        <input name="chest" type="number" placeholder="Chest (in)" class="w-full border border-gray-300 rounded-md p-2 bg-slate-100 text-gray-800" />
+                        <input name="waist" type="number" placeholder="Waist (in)" class="w-full border border-gray-300 rounded-md p-2 bg-slate-100 text-gray-800" />
+                        <input name="thigh" type="number" placeholder="Thigh (in)" class="w-full border border-gray-300 rounded-md p-2 bg-slate-100 text-gray-800" />
+                        <button type="submit" class="w-full bg-indigo-600 text-white rounded-md py-2 hover:bg-indigo-700 transition duration-300">Add Measurements</button>
+                    </form>
+                </div>
+                <div class="rounded-xl shadow-md p-4 card">
+                    <h3 class="text-lg font-semibold mb-2">Measurements History</h3>
+                    <ul id="measurementsList" class="space-y-1"></ul>
+                </div>
+            `;
+            setTimeout(() => {
+                const addMeasurementsForm = document.getElementById('addMeasurementsForm');
+                if (addMeasurementsForm) addMeasurementsForm.addEventListener('submit', handleAddMeasurements);
+                const measurementsList = document.getElementById('measurementsList');
+                measurementsLog.forEach(log => {
+                    const li = document.createElement('li');
+                    li.className = "flex justify-between p-2 bg-slate-100 rounded-md text-sm";
+                    li.innerHTML = `<span>${log.date}</span><div class="flex space-x-4"><span>C: ${log.chest}"</span><span>W: ${log.waist}"</span><span>T: ${log.thigh}"</span></div>`;
+                    measurementsList.appendChild(li);
+                });
+            }, 0);
+            return content;
+        }
+
+        // Main rendering function
+        function renderApp() {
+            root.innerHTML = '';
+            
+            if (!isAuthReady) {
+                // Render loading spinner
+                const loadingContainer = document.createElement('div');
+                loadingContainer.className = "flex items-center justify-center min-h-screen w-full";
+                loadingContainer.innerHTML = `<div class="loading-animation"></div>`;
+                root.appendChild(loadingContainer);
+                return;
+            }
+
+            const appContainer = document.createElement('div');
+            appContainer.className = "min-h-screen bg-slate-100 flex flex-col items-center p-4 w-full";
+            
+            const header = document.createElement('header');
+            header.className = "w-full max-w-2xl bg-white rounded-t-xl shadow-lg p-4 flex justify-around card";
+            header.innerHTML = `
+                <button id="btn-dashboard" class="p-2 rounded-lg font-semibold transition-colors duration-300 ${view === 'dashboard' ? 'bg-indigo-600 text-white' : 'text-gray-600 hover:bg-slate-200'}">Dashboard</button>
+                <button id="btn-macros" class="p-2 rounded-lg font-semibold transition-colors duration-300 ${view === 'macros' ? 'bg-indigo-600 text-white' : 'text-gray-600 hover:bg-slate-200'}">Macros</button>
+                <button id="btn-weights" class="p-2 rounded-lg font-semibold transition-colors duration-300 ${view === 'weights' ? 'bg-indigo-600 text-white' : 'text-gray-600 hover:bg-slate-200'}">Weights</button>
+                <button id="btn-measurements" class="p-2 rounded-lg font-semibold transition-colors duration-300 ${view === 'measurements' ? 'bg-indigo-600 text-white' : 'text-gray-600 hover:bg-slate-200'}">Measurements</button>
+            `;
+            
+            const main = document.createElement('main');
+            main.className = "w-full max-w-2xl bg-slate-100 rounded-b-xl shadow-lg p-6 flex-grow card";
+
+            const footer = document.createElement('footer');
+            footer.className = "mt-4 text-center text-gray-500 text-xs";
+            footer.innerHTML = `&copy; 2025 Personal Tracker. User ID: ${user?.uid}`;
+
+            // Append elements and set event listeners
+            appContainer.appendChild(header);
+            appContainer.appendChild(main);
+            appContainer.appendChild(footer);
+            root.appendChild(appContainer);
+
+            document.getElementById('btn-dashboard').addEventListener('click', () => { view = 'dashboard'; renderApp(); });
+            document.getElementById('btn-macros').addEventListener('click', () => { view = 'macros'; renderApp(); });
+            document.getElementById('btn-weights').addEventListener('click', () => { view = 'weights'; renderApp(); });
+            document.getElementById('btn-measurements').addEventListener('click', () => { view = 'measurements'; renderApp(); });
+            
+            main.innerHTML = '';
+            switch (view) {
+                case 'dashboard': main.appendChild(renderDashboard()); break;
+                case 'macros': main.appendChild(renderMacros()); break;
+                case 'weights': main.appendChild(renderWeights()); break;
+                case 'measurements': main.appendChild(renderMeasurements()); break;
+            }
+        }
+
+        // --- Main Execution Logic ---
+        // Initial render of the loading state
+        renderApp();
+        
+        onAuthStateChanged(auth, async (currentUser) => {
+            if (currentUser) {
+                user = currentUser;
+            } else {
+                try {
+                    if (initialAuthToken) {
+                        await signInWithCustomToken(auth, initialAuthToken);
                     } else {
-                        try {
-                            if (initialAuthToken) {
-                                await signInWithCustomToken(auth, initialAuthToken);
-                            } else {
-                                await signInAnonymously(auth);
-                            }
-                        } catch (error) {
-                            console.error("Authentication error:", error);
-                        }
+                        await signInAnonymously(auth);
                     }
-                    setIsAuthReady(true);
-                });
-                return () => unsubscribeAuth();
-            }, []);
-
-            // Effect hook for fetching data after authentication
-            useEffect(() => {
-                if (!user || !isAuthReady) return;
-
-                const userId = auth.currentUser.uid;
+                    user = auth.currentUser;
+                } catch (error) {
+                    console.error("Authentication error:", error);
+                }
+            }
+            
+            if (user) {
+                isAuthReady = true;
+                renderApp(); // Initial render after auth
                 
-                // Real-time listener for macro goals
-                const userDocRef = doc(db, `/artifacts/${appId}/users/${userId}`);
-                const unsubscribeGoals = onSnapshot(userDocRef, (docSnap) => {
-                    if (docSnap.exists() && docSnap.data().macroGoals) {
-                        setMacroGoals(docSnap.data().macroGoals);
-                    }
-                }, (error) => {
-                    console.error("Error fetching macro goals:", error);
-                });
+                const userId = user.uid;
 
-                // Real-time listener for meals
+                // Set up real-time listeners for all data
+                const userDocRef = doc(db, `/artifacts/${appId}/users/${userId}`);
+                onSnapshot(userDocRef, (docSnap) => {
+                    if (docSnap.exists() && docSnap.data().macroGoals) {
+                        macroGoals = docSnap.data().macroGoals;
+                        renderApp();
+                    }
+                }, (error) => { console.error("Error fetching macro goals:", error); });
+
                 const mealsColRef = collection(db, `/artifacts/${appId}/users/${userId}/meals`);
-                const unsubscribeMeals = onSnapshot(mealsColRef, (snapshot) => {
+                onSnapshot(mealsColRef, (snapshot) => {
                     const newMeals = [];
                     let totalProtein = 0;
                     let totalCarbs = 0;
@@ -117,448 +491,31 @@
                         totalCarbs += meal.carbs;
                         totalFat += meal.fat;
                     });
-                    newMeals.sort((a, b) => b.timestamp - a.timestamp); // Sort by timestamp descending
-                    setMeals(newMeals);
-                    setDailyMacros({ protein: totalProtein, carbs: totalCarbs, fat: totalFat });
-                }, (error) => {
-                    console.error("Error fetching meals:", error);
-                });
+                    newMeals.sort((a, b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
+                    meals = newMeals;
+                    dailyMacros = { protein: totalProtein, carbs: totalCarbs, fat: totalFat };
+                    renderApp();
+                }, (error) => { console.error("Error fetching meals:", error); });
 
-                // Real-time listener for weights
                 const weightsColRef = collection(db, `/artifacts/${appId}/users/${userId}/weights`);
-                const unsubscribeWeight = onSnapshot(weightsColRef, (snapshot) => {
-                    const weights = [];
-                    snapshot.forEach(doc => weights.push({ id: doc.id, ...doc.data() }));
-                    weights.sort((a, b) => new Date(a.date) - new Date(b.date)); // Sort by date ascending
-                    setWeightLog(weights);
-                }, (error) => {
-                    console.error("Error fetching weights:", error);
-                });
-
-                // Real-time listener for measurements
-                const measurementsColRef = collection(db, `/artifacts/${appId}/users/${userId}/measurements`);
-                const unsubscribeMeasurements = onSnapshot(measurementsColRef, (snapshot) => {
-                    const measurements = [];
-                    snapshot.forEach(doc => measurements.push({ id: doc.id, ...doc.data() }));
-                    measurements.sort((a, b) => new Date(a.date) - new Date(b.date)); // Sort by date ascending
-                    setMeasurementsLog(measurements);
-                }, (error) => {
-                    console.error("Error fetching measurements:", error);
-                });
-
-                return () => {
-                    unsubscribeGoals();
-                    unsubscribeMeals();
-                    unsubscribeWeight();
-                    unsubscribeMeasurements();
-                };
-            }, [user, isAuthReady]);
-
-            // Helper function for countdown
-            const calculateCountdown = (targetDate) => {
-                const now = new Date();
-                const target = new Date(targetDate);
-                const diff = target - now;
-
-                if (diff <= 0) return { days: 0, hours: 0, minutes: 0, seconds: 0 };
-
-                const seconds = Math.floor((diff / 1000) % 60);
-                const minutes = Math.floor((diff / 1000 / 60) % 60);
-                const hours = Math.floor((diff / (1000 * 60 * 60)) % 24);
-                const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-                return { days, hours, minutes, seconds };
-            };
-
-            const CountdownDisplay = ({ targetDate, title }) => {
-                const [time, setTime] = useState(calculateCountdown(targetDate));
-
-                useEffect(() => {
-                    const timer = setInterval(() => {
-                        setTime(calculateCountdown(targetDate));
-                    }, 1000);
-                    return () => clearInterval(timer);
-                }, [targetDate]);
-
-                return (
-                    <div className="flex flex-col items-center p-4 rounded-lg shadow-md w-full card">
-                        <h3 className="text-xl font-bold mb-2 text-indigo-400">{title}</h3>
-                        <div className="flex justify-center space-x-4 text-white">
-                            <div className="flex flex-col items-center">
-                                <span className="text-4xl font-bold">{time.days}</span>
-                                <span className="text-sm text-gray-400">Days</span>
-                            </div>
-                            <div className="flex flex-col items-center">
-                                <span className="text-4xl font-bold">{time.hours}</span>
-                                <span className="text-sm text-gray-400">Hours</span>
-                            </div>
-                            <div className="flex flex-col items-center">
-                                <span className="text-4xl font-bold">{time.minutes}</span>
-                                <span className="text-sm text-gray-400">Minutes</span>
-                            </div>
-                            <div className="flex flex-col items-center">
-                                <span className="text-4xl font-bold">{time.seconds}</span>
-                                <span className="text-sm text-gray-400">Seconds</span>
-                            </div>
-                        </div>
-                    </div>
-                );
-            };
-
-            const handleUpdateMacroGoals = async (e) => {
-                e.preventDefault();
-                const form = e.target;
-                const newProtein = Number(form.protein.value);
-                const newCarbs = Number(form.carbs.value);
-                const newFat = Number(form.fat.value);
-
-                if (!user) {
-                    setMessage('Please wait for authentication to complete.');
-                    return;
-                }
-                const userId = auth.currentUser.uid;
-                const userDocRef = doc(db, `/artifacts/${appId}/users/${userId}`);
-                try {
-                    await setDoc(userDocRef, { macroGoals: { protein: newProtein, carbs: newCarbs, fat: newFat } }, { merge: true });
-                    setMessage('Macro goals updated successfully!');
-                } catch (e) {
-                    console.error("Error updating macro goals: ", e);
-                    setMessage('Failed to update macro goals.');
-                }
-            };
-            
-            const handleAddMeal = async (e) => {
-                e.preventDefault();
-                if (!inputMeal.name || !inputMeal.protein || !inputMeal.carbs || !inputMeal.fat) {
-                    setMessage('Please fill out all meal fields.');
-                    return;
-                }
-                if (!user) {
-                    setMessage('Please wait for authentication to complete.');
-                    return;
-                }
-
-                const userId = auth.currentUser.uid;
-                const mealsColRef = collection(db, `/artifacts/${appId}/users/${userId}/meals`);
-
-                try {
-                    await addDoc(mealsColRef, {
-                        name: inputMeal.name,
-                        protein: Number(inputMeal.protein),
-                        carbs: Number(inputMeal.carbs),
-                        fat: Number(inputMeal.fat),
-                        timestamp: serverTimestamp(),
-                    });
-                    setInputMeal({ name: '', protein: '', carbs: '', fat: '' });
-                    setMessage('Meal added successfully!');
-                } catch (e) {
-                    console.error("Error adding meal:", e);
-                    setMessage('Failed to add meal.');
-                }
-            };
-
-            const handleAddWeight = async (e) => {
-                e.preventDefault();
-                if (!inputWeight) {
-                    setMessage('Please enter a weight.');
-                    return;
-                }
-                if (!user) {
-                    setMessage('Please wait for authentication to complete.');
-                    return;
-                }
-                const userId = auth.currentUser.uid;
-                const weightsColRef = collection(db, `/artifacts/${appId}/users/${userId}/weights`);
-
-                try {
-                    await addDoc(weightsColRef, {
-                        weight: Number(inputWeight),
-                        date: new Date().toISOString().split('T')[0],
-                        timestamp: serverTimestamp(),
-                    });
-                    setInputWeight('');
-                    setMessage('Weight added successfully!');
-                } catch (e) {
-                console.error("Error adding weight:", e);
-                    setMessage('Failed to add weight.');
-                }
-            };
-            
-            const handleAddMeasurements = async (e) => {
-                e.preventDefault();
-                if (!inputMeasurements.chest || !inputMeasurements.waist || !inputMeasurements.thigh) {
-                    setMessage('Please enter all measurements.');
-                    return;
-                }
-                if (!user) {
-                    setMessage('Please wait for authentication to complete.');
-                    return;
-                }
-                const userId = auth.currentUser.uid;
-                const measurementsColRef = collection(db, `/artifacts/${appId}/users/${userId}/measurements`);
-
-                try {
-                    await addDoc(measurementsColRef, {
-                        chest: Number(inputMeasurements.chest),
-                        waist: Number(inputMeasurements.waist),
-                        thigh: Number(inputMeasurements.thigh),
-                        date: new Date().toISOString().split('T')[0],
-                        timestamp: serverTimestamp(),
-                    });
-                    setInputMeasurements({ chest: '', waist: '', thigh: '' });
-                    setMessage('Measurements added successfully!');
-                } catch (e) {
-                    console.error("Error adding measurements:", e);
-                    setMessage('Failed to add measurements.');
-                }
-            };
-
-            const getMealAdvice = () => {
-                const { protein, carbs, fat } = inputMeal;
-                const remaining = {
-                    protein: macroGoals.protein - dailyMacros.protein,
-                    carbs: macroGoals.carbs - dailyMacros.carbs,
-                    fat: macroGoals.fat - dailyMacros.fat,
-                };
-                const isGoodIdea = Number(protein) <= remaining.protein && Number(carbs) <= remaining.carbs && Number(fat) <= remaining.fat;
-
-                if (!protein || !carbs || !fat) {
-                    return null;
-                }
+                onSnapshot(weightsColRef, (snapshot) => {
+                    const newWeights = [];
+                    snapshot.forEach(doc => newWeights.push({ id: doc.id, ...doc.data() }));
+                    newWeights.sort((a, b) => new Date(a.date) - new Date(b.date));
+                    weightLog = newWeights;
+                    renderApp();
+                }, (error) => { console.error("Error fetching weights:", error); });
                 
-                return isGoodIdea
-                    ? <p className="text-green-400 font-bold mt-2">✅ This is a good idea to eat!</p>
-                    : <p className="text-red-400 font-bold mt-2">❌ This will exceed your goals. Maybe reconsider?</p>;
-            };
-
-            if (!isAuthReady) {
-                return (
-                    <div className="flex items-center justify-center min-h-screen bg-slate-900">
-                        <div className="loading-animation"></div>
-                    </div>
-                );
+                const measurementsColRef = collection(db, `/artifacts/${appId}/users/${userId}/measurements`);
+                onSnapshot(measurementsColRef, (snapshot) => {
+                    const newMeasurements = [];
+                    snapshot.forEach(doc => newMeasurements.push({ id: doc.id, ...doc.data() }));
+                    newMeasurements.sort((a, b) => new Date(a.date) - new Date(b.date));
+                    measurementsLog = newMeasurements;
+                    renderApp();
+                }, (error) => { console.error("Error fetching measurements:", error); });
             }
-
-            const renderView = () => {
-                switch (view) {
-                    case 'dashboard':
-                        return (
-                            <div className="space-y-6">
-                                <CountdownDisplay targetDate="2025-12-29T00:00:00" title="Time until Wedding" />
-                                <div className="bg-slate-800 text-white rounded-xl shadow-md p-6 text-center card">
-                                    <p className="text-xl font-semibold italic text-indigo-400">"You can do it. Every small step forward is a victory."</p>
-                                </div>
-                                <CountdownDisplay targetDate="2025-10-31T00:00:00" title="Time until Josh's Wedding" />
-                            </div>
-                        );
-                    case 'macros':
-                        return (
-                            <div className="space-y-6 text-white">
-                                <h2 className="text-2xl font-bold text-center text-indigo-400">Macro Tracker</h2>
-                                <p className="text-gray-400 text-sm text-center">User ID: {user?.uid}</p>
-                                {message && (
-                                    <div className="p-3 bg-indigo-900 text-indigo-300 rounded-lg text-sm text-center card">{message}</div>
-                                )}
-                                
-                                <div className="rounded-xl shadow-md p-4 card">
-                                    <h3 className="text-lg font-semibold mb-2">My Daily Macro Goals</h3>
-                                    <form onSubmit={handleUpdateMacroGoals} className="flex flex-col space-y-2">
-                                        <div className="grid grid-cols-3 gap-2">
-                                            <div>
-                                                <label className="text-xs text-gray-400">Protein (g)</label>
-                                                <input name="protein" type="number" defaultValue={macroGoals.protein} className="w-full border border-slate-700 rounded-md p-2 bg-slate-700 text-white" />
-                                            </div>
-                                            <div>
-                                                <label className="text-xs text-gray-400">Carbs (g)</label>
-                                                <input name="carbs" type="number" defaultValue={macroGoals.carbs} className="w-full border border-slate-700 rounded-md p-2 bg-slate-700 text-white" />
-                                            </div>
-                                            <div>
-                                                <label className="text-xs text-gray-400">Fat (g)</label>
-                                                <input name="fat" type="number" defaultValue={macroGoals.fat} className="w-full border border-slate-700 rounded-md p-2 bg-slate-700 text-white" />
-                                            </div>
-                                        </div>
-                                        <button type="submit" className="w-full bg-indigo-600 text-white rounded-md py-2 hover:bg-indigo-700 transition duration-300">Update Goals</button>
-                                    </form>
-                                </div>
-                                
-                                <div className="rounded-xl shadow-md p-4 card">
-                                    <h3 className="text-lg font-semibold mb-2">Today's Progress</h3>
-                                    <div className="grid grid-cols-3 gap-2 text-center">
-                                        <div>
-                                            <span className="text-2xl font-bold">{dailyMacros.protein}g</span> / <span className="text-gray-400">{macroGoals.protein}g</span>
-                                            <p className="text-sm text-gray-400">Protein</p>
-                                        </div>
-                                        <div>
-                                            <span className="text-2xl font-bold">{dailyMacros.carbs}g</span> / <span className="text-gray-400">{macroGoals.carbs}g</span>
-                                            <p className="text-sm text-gray-400">Carbs</p>
-                                        </div>
-                                        <div>
-                                            <span className="text-2xl font-bold">{dailyMacros.fat}g</span> / <span className="text-gray-400">{macroGoals.fat}g</span>
-                                            <p className="text-sm text-gray-400">Fat</p>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div className="rounded-xl shadow-md p-4 card">
-                                    <h3 className="text-lg font-semibold mb-2">Add a Meal</h3>
-                                    <form onSubmit={handleAddMeal} className="flex flex-col space-y-2">
-                                        <input
-                                            type="text"
-                                            value={inputMeal.name}
-                                            onChange={(e) => setInputMeal({...inputMeal, name: e.target.value})}
-                                            placeholder="Meal Name (e.g., Chicken Salad)"
-                                            className="w-full border border-slate-700 rounded-md p-2 bg-slate-700 text-white"
-                                        />
-                                        <div className="grid grid-cols-3 gap-2">
-                                            <input
-                                                type="number"
-                                                value={inputMeal.protein}
-                                                onChange={(e) => setInputMeal({...inputMeal, protein: e.target.value})}
-                                                placeholder="Protein (g)"
-                                                className="w-full border border-slate-700 rounded-md p-2 bg-slate-700 text-white"
-                                            />
-                                            <input
-                                                type="number"
-                                                value={inputMeal.carbs}
-                                                onChange={(e) => setInputMeal({...inputMeal, carbs: e.target.value})}
-                                                placeholder="Carbs (g)"
-                                                className="w-full border border-slate-700 rounded-md p-2 bg-slate-700 text-white"
-                                            />
-                                            <input
-                                                type="number"
-                                                value={inputMeal.fat}
-                                                onChange={(e) => setInputMeal({...inputMeal, fat: e.target.value})}
-                                                placeholder="Fat (g)"
-                                                className="w-full border border-slate-700 rounded-md p-2 bg-slate-700 text-white"
-                                            />
-                                        </div>
-                                        {getMealAdvice()}
-                                        <button type="submit" className="w-full bg-green-600 text-white rounded-md py-2 hover:bg-green-700 transition duration-300">Log Meal</button>
-                                    </form>
-                                    <div className="mt-4">
-                                        <h4 className="font-semibold">Logged Meals:</h4>
-                                        <ul className="text-sm mt-2 space-y-1">
-                                            {meals.map(meal => (
-                                                <li key={meal.id} className="flex justify-between items-center bg-slate-700 p-2 rounded-md">
-                                                    <span>{meal.name}</span>
-                                                    <span className="text-xs text-gray-400">P:{meal.protein} C:{meal.carbs} F:{meal.fat}</span>
-                                                </li>
-                                            ))}
-                                        </ul>
-                                    </div>
-                                </div>
-                            </div>
-                        );
-                    case 'weights':
-                        return (
-                            <div className="space-y-6 text-white">
-                                <h2 className="text-2xl font-bold text-center text-indigo-400">Weight Tracker</h2>
-                                <p className="text-gray-400 text-sm text-center">User ID: {user?.uid}</p>
-                                {message && (
-                                    <div className="p-3 bg-indigo-900 text-indigo-300 rounded-lg text-sm text-center card">{message}</div>
-                                )}
-                                <div className="rounded-xl shadow-md p-4 card">
-                                    <h3 className="text-lg font-semibold mb-2">Log New Weight</h3>
-                                    <form onSubmit={handleAddWeight} className="flex flex-col space-y-2">
-                                        <input
-                                            type="number"
-                                            value={inputWeight}
-                                            onChange={(e) => setInputWeight(e.target.value)}
-                                            placeholder="Enter weight in lbs"
-                                            className="w-full border border-slate-700 rounded-md p-2 bg-slate-700 text-white"
-                                        />
-                                        <button type="submit" className="w-full bg-indigo-600 text-white rounded-md py-2 hover:bg-indigo-700 transition duration-300">Add Weight</button>
-                                    </form>
-                                </div>
-                                <div className="rounded-xl shadow-md p-4 card">
-                                    <h3 className="text-lg font-semibold mb-2">Weight History</h3>
-                                    <ul className="space-y-1">
-                                        {weightLog.map(log => (
-                                            <li key={log.id} className="flex justify-between p-2 bg-slate-700 rounded-md">
-                                                <span>{log.date}</span>
-                                                <span className="font-semibold">{log.weight} lbs</span>
-                                            </li>
-                                        ))}
-                                    </ul>
-                                </div>
-                            </div>
-                        );
-                    case 'measurements':
-                        return (
-                            <div className="space-y-6 text-white">
-                                <h2 className="text-2xl font-bold text-center text-indigo-400">Measurements Tracker</h2>
-                                <p className="text-gray-400 text-sm text-center">User ID: {user?.uid}</p>
-                                {message && (
-                                    <div className="p-3 bg-indigo-900 text-indigo-300 rounded-lg text-sm text-center card">{message}</div>
-                                )}
-                                <div className="rounded-xl shadow-md p-4 card">
-                                    <h3 className="text-lg font-semibold mb-2">Log New Measurements</h3>
-                                    <form onSubmit={handleAddMeasurements} className="flex flex-col space-y-2">
-                                        <input
-                                            type="number"
-                                            value={inputMeasurements.chest}
-                                            onChange={(e) => setInputMeasurements({...inputMeasurements, chest: e.target.value})}
-                                            placeholder="Chest (in)"
-                                            className="w-full border border-slate-700 rounded-md p-2 bg-slate-700 text-white"
-                                        />
-                                        <input
-                                            type="number"
-                                            value={inputMeasurements.waist}
-                                            onChange={(e) => setInputMeasurements({...inputMeasurements, waist: e.target.value})}
-                                            placeholder="Waist (in)"
-                                            className="w-full border border-slate-700 rounded-md p-2 bg-slate-700 text-white"
-                                        />
-                                        <input
-                                            type="number"
-                                            value={inputMeasurements.thigh}
-                                            onChange={(e) => setInputMeasurements({...inputMeasurements, thigh: e.target.value})}
-                                            placeholder="Thigh (in)"
-                                            className="w-full border border-slate-700 rounded-md p-2 bg-slate-700 text-white"
-                                        />
-                                        <button type="submit" className="w-full bg-indigo-600 text-white rounded-md py-2 hover:bg-indigo-700 transition duration-300">Add Measurements</button>
-                                    </form>
-                                </div>
-                                <div className="rounded-xl shadow-md p-4 card">
-                                    <h3 className="text-lg font-semibold mb-2">Measurements History</h3>
-                                    <ul className="space-y-1">
-                                        {measurementsLog.map(log => (
-                                            <li key={log.id} className="flex justify-between p-2 bg-slate-700 rounded-md text-sm">
-                                                <span>{log.date}</span>
-                                                <div className="flex space-x-4">
-                                                    <span>C: {log.chest}"</span>
-                                                    <span>W: {log.waist}"</span>
-                                                    <span>T: {log.thigh}"</span>
-                                                </div>
-                                            </li>
-                                        ))}
-                                    </ul>
-                                </div>
-                            </div>
-                        );
-                    default:
-                        return null;
-                }
-            };
-            
-            return (
-                <div className="min-h-screen bg-slate-900 flex flex-col items-center p-4">
-                    <header className="w-full max-w-2xl bg-slate-800 rounded-t-xl shadow-lg p-4 flex justify-around card">
-                        <button onClick={() => setView('dashboard')} className={`p-2 rounded-lg font-semibold transition-colors duration-300 ${view === 'dashboard' ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:bg-slate-700'}`}>Dashboard</button>
-                        <button onClick={() => setView('macros')} className={`p-2 rounded-lg font-semibold transition-colors duration-300 ${view === 'macros' ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:bg-slate-700'}`}>Macros</button>
-                        <button onClick={() => setView('weights')} className={`p-2 rounded-lg font-semibold transition-colors duration-300 ${view === 'weights' ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:bg-slate-700'}`}>Weights</button>
-                        <button onClick={() => setView('measurements')} className={`p-2 rounded-lg font-semibold transition-colors duration-300 ${view === 'measurements' ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:bg-slate-700'}`}>Measurements</button>
-                    </header>
-                    <main className="w-full max-w-2xl bg-slate-900 rounded-b-xl shadow-lg p-6 flex-grow card">
-                        {renderView()}
-                    </main>
-                    <footer className="mt-4 text-center text-gray-500 text-xs">
-                        &copy; 2025 Personal Tracker. User ID: {user?.uid}
-                    </footer>
-                </div>
-            );
-        }
-        
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<App />);
+        });
     </script>
 </body>
 </html>
