@@ -1,12 +1,14 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Personal Fitness Tracker</title>
+    <!-- Tailwind CSS for styling -->
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Chart.js for charts -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Font Awesome for icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
@@ -38,6 +40,7 @@
 </head>
 <body class="bg-gray-950 text-gray-200">
     <div id="root" class="min-h-screen flex flex-col items-center justify-center p-4">
+        <!-- Loading state initially -->
         <div id="loading" class="flex flex-col items-center text-purple-300">
             <div class="loading-animation mb-4"></div>
             <p>Loading your data...</p>
@@ -48,7 +51,7 @@
         // Import necessary Firebase libraries
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, setDoc, collection, onSnapshot, addDoc, query, orderBy, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, doc, setDoc, collection, onSnapshot, addDoc, query, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         
         // --- YOUR ACTUAL FIREBASE CONFIGURATION ---
         const firebaseConfig = {
@@ -71,14 +74,13 @@
         let measurementsLog = [];
         let message = '';
         const root = document.getElementById('root');
-        let unsubscribeListeners = []; // Array to hold unsubscribe functions
+        let unsubscribeListeners = [];
 
         // Initialize Firebase services
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
         const db = getFirestore(app);
 
-        // State to track if data has been loaded
         let dataLoaded = {
             macroGoals: false,
             meals: false,
@@ -86,7 +88,6 @@
             measurements: false
         };
 
-        // --- Utility Functions ---
         function showMessage(msg) {
             message = msg;
             renderApp();
@@ -108,13 +109,10 @@
             return { days, hours, minutes, seconds };
         }
 
-        // --- Firebase Listeners and Data Fetching ---
         function setupDataListeners(userId) {
-            // Unsubscribe previous listeners to prevent memory leaks
             unsubscribeListeners.forEach(unsubscribe => unsubscribe());
             unsubscribeListeners = [];
 
-            // Macro Goals Listener
             const userDocRef = doc(db, `artifacts/${appId}/users/${userId}`);
             unsubscribeListeners.push(onSnapshot(userDocRef, (doc) => {
                 if (doc.exists() && doc.data().macroGoals) {
@@ -124,10 +122,9 @@
                 checkAllDataLoaded();
             }));
 
-            // Meals Listener
-            const mealsColRef = query(collection(db, `artifacts/${appId}/users/${userId}/meals`), orderBy('timestamp', 'desc'));
+            const mealsColRef = query(collection(db, `artifacts/${appId}/users/${userId}/meals`));
             unsubscribeListeners.push(onSnapshot(mealsColRef, (snapshot) => {
-                meals = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                meals = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a, b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
                 const today = new Date().toISOString().split('T')[0];
                 dailyMacros.protein = meals.filter(m => m.timestamp && m.timestamp.toDate().toISOString().split('T')[0] === today).reduce((sum, m) => sum + m.protein, 0);
                 dailyMacros.carbs = meals.filter(m => m.timestamp && m.timestamp.toDate().toISOString().split('T')[0] === today).reduce((sum, m) => sum + m.carbs, 0);
@@ -136,18 +133,16 @@
                 checkAllDataLoaded();
             }));
 
-            // Weight Log Listener
-            const weightsColRef = query(collection(db, `artifacts/${appId}/users/${userId}/weights`), orderBy('date', 'asc'));
+            const weightsColRef = query(collection(db, `artifacts/${appId}/users/${userId}/weights`));
             unsubscribeListeners.push(onSnapshot(weightsColRef, (snapshot) => {
-                weightLog = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                weightLog = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a, b) => new Date(a.date) - new Date(b.date));
                 dataLoaded.weights = true;
                 checkAllDataLoaded();
             }));
 
-            // Measurements Log Listener
-            const measurementsColRef = query(collection(db, `artifacts/${appId}/users/${userId}/measurements`), orderBy('date', 'asc'));
+            const measurementsColRef = query(collection(db, `artifacts/${appId}/users/${userId}/measurements`));
             unsubscribeListeners.push(onSnapshot(measurementsColRef, (snapshot) => {
-                measurementsLog = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                measurementsLog = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a, b) => new Date(a.date) - new Date(b.date));
                 dataLoaded.measurements = true;
                 checkAllDataLoaded();
             }));
@@ -159,14 +154,12 @@
             }
         }
 
-        // --- Authentication Logic ---
         onAuthStateChanged(auth, (authUser) => {
             if (authUser) {
                 user = authUser;
                 setupDataListeners(user.uid);
             } else {
                 user = null;
-                // Sign in anonymously if no user is found
                 signInAnonymously(auth).catch((error) => {
                     console.error("Anonymous sign-in failed:", error);
                     showMessage("Authentication failed. Please try again later.");
@@ -174,7 +167,6 @@
             }
         });
 
-        // --- Event Handlers ---
         async function handleUpdateMacroGoals(e) {
             e.preventDefault();
             const form = e.target;
@@ -277,7 +269,6 @@
             }
         }
 
-        // --- Chart Functions ---
         function createLineChart(canvasId, datasets, labels) {
             const ctx = document.getElementById(canvasId);
             if (!ctx) return;
@@ -293,10 +284,10 @@
                     labels: labels,
                     datasets: datasets.map(dataset => ({
                         ...dataset,
-                        borderColor: dataset.borderColor || '#8b5cf6', // Use provided color or default
-                        backgroundColor: dataset.backgroundColor || 'rgba(139, 92, 246, 0.2)', // Use provided color or default
+                        borderColor: dataset.borderColor || '#8b5cf6',
+                        backgroundColor: dataset.backgroundColor || 'rgba(139, 92, 246, 0.2)',
                         tension: 0.4,
-                        fill: true,
+                        fill: false,
                         pointBackgroundColor: dataset.pointBackgroundColor || '#8b5cf6',
                         pointBorderColor: '#fff',
                         pointHoverBackgroundColor: '#fff',
@@ -341,8 +332,6 @@
             });
         }
 
-
-        // --- Renderer Functions ---
         function renderDashboard() {
             return `
                 <div class="space-y-6 max-w-4xl mx-auto">
@@ -652,10 +641,8 @@
             `;
         }
 
-        // The main render function
         function renderApp() {
             if (!user || !Object.values(dataLoaded).every(status => status)) {
-                // Show loading state
                 root.innerHTML = `
                     <div id="loading" class="flex flex-col items-center text-purple-300">
                         <div class="loading-animation mb-4"></div>
@@ -690,8 +677,8 @@
                 </main>
             `;
             
-            // Re-bind event listeners and render charts after the DOM is updated
-            bindEventsAndRenderCharts();
+            // Wait for the next tick to ensure the DOM is updated before binding events and rendering charts
+            setTimeout(bindEventsAndRenderCharts, 0);
         }
 
         function bindEventsAndRenderCharts() {
@@ -709,8 +696,10 @@
                     const datasets = [{ label: 'Weight (lbs)', data: sortedLog.map(log => log.weight) }];
                     createLineChart('weightChart', datasets, labels);
                 } else {
-                    const chartContainer = document.getElementById('weightChart').parentElement;
-                    chartContainer.innerHTML = `<div class="text-center text-gray-400 p-4">Log at least two entries to see a chart.</div>`;
+                    const chartContainer = document.getElementById('weightChart')?.parentElement;
+                    if (chartContainer) {
+                        chartContainer.innerHTML = `<div class="text-center text-gray-400 p-4">Log at least two entries to see a chart.</div>`;
+                    }
                 }
             }
             if (view === 'measurements') {
@@ -727,13 +716,14 @@
                     ];
                     createLineChart('measurementsChart', datasets, labels);
                 } else {
-                    const chartContainer = document.getElementById('measurementsChart').parentElement;
-                    chartContainer.innerHTML = `<div class="text-center text-gray-400 p-4">Log at least two entries to see a chart.</div>`;
+                    const chartContainer = document.getElementById('measurementsChart')?.parentElement;
+                    if (chartContainer) {
+                        chartContainer.innerHTML = `<div class="text-center text-gray-400 p-4">Log at least two entries to see a chart.</div>`;
+                    }
                 }
             }
         }
         
-        // Expose functions to the global scope for onclick events
         window.showView = (newView) => {
             view = newView;
             renderApp();
@@ -743,7 +733,6 @@
         window.handleAddWeight = handleAddWeight;
         window.handleAddMeasurements = handleAddMeasurements;
 
-        // Initial render call
         renderApp();
     </script>
 </body>
