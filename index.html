@@ -36,6 +36,11 @@
             width: 1.25rem;
             height: 1.25rem;
         }
+        .chart-container {
+            position: relative;
+            height: 300px;
+            width: 100%;
+        }
     </style>
 </head>
 <body class="bg-gray-950 text-gray-200">
@@ -67,7 +72,7 @@
         // Global state variables
         let user = null;
         let view = 'dashboard';
-        let macroGoals = { protein: 137, carbs: 307, fat: 106 };
+        let macroGoals = { protein: 0, carbs: 0, fat: 0 };
         let dailyMacros = { protein: 0, carbs: 0, fat: 0 };
         let meals = [];
         let weightLog = [];
@@ -81,13 +86,8 @@
         const auth = getAuth(app);
         const db = getFirestore(app);
 
-        let dataLoaded = {
-            macroGoals: false,
-            meals: false,
-            weights: false,
-            measurements: false
-        };
-
+        let dataLoadingPromise;
+        
         function showMessage(msg) {
             message = msg;
             renderApp();
@@ -112,61 +112,86 @@
         function setupDataListeners(userId) {
             unsubscribeListeners.forEach(unsubscribe => unsubscribe());
             unsubscribeListeners = [];
+            
+            return new Promise((resolve) => {
+                let dataLoaded = {
+                    macroGoals: false,
+                    meals: false,
+                    weights: false,
+                    measurements: false
+                };
 
-            const userDocRef = doc(db, `artifacts/${appId}/users/${userId}`);
-            unsubscribeListeners.push(onSnapshot(userDocRef, (doc) => {
-                if (doc.exists() && doc.data().macroGoals) {
-                    macroGoals = doc.data().macroGoals;
-                }
-                dataLoaded.macroGoals = true;
-                checkAllDataLoaded();
-            }));
+                const checkAllDataLoaded = () => {
+                    if (Object.values(dataLoaded).every(status => status)) {
+                        console.log('All data loaded. Resolving promise.');
+                        resolve();
+                    }
+                };
+                
+                const userDocRef = doc(db, `artifacts/${appId}/users/${userId}`);
+                unsubscribeListeners.push(onSnapshot(userDocRef, (doc) => {
+                    console.log('Macro goals snapshot received.');
+                    if (doc.exists() && doc.data().macroGoals) {
+                        macroGoals = doc.data().macroGoals;
+                    } else {
+                        // Set default goals if none exist
+                        macroGoals = { protein: 137, carbs: 307, fat: 106 };
+                    }
+                    dataLoaded.macroGoals = true;
+                    checkAllDataLoaded();
+                }));
 
-            // IMPORTANT: Removed orderBy() to avoid index errors. Data is now sorted in JavaScript.
-            const mealsColRef = query(collection(db, `artifacts/${appId}/users/${userId}/meals`));
-            unsubscribeListeners.push(onSnapshot(mealsColRef, (snapshot) => {
-                meals = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a, b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
-                const today = new Date().toISOString().split('T')[0];
-                dailyMacros.protein = meals.filter(m => m.timestamp && m.timestamp.toDate().toISOString().split('T')[0] === today).reduce((sum, m) => sum + m.protein, 0);
-                dailyMacros.carbs = meals.filter(m => m.timestamp && m.timestamp.toDate().toISOString().split('T')[0] === today).reduce((sum, m) => sum + m.carbs, 0);
-                dailyMacros.fat = meals.filter(m => m.timestamp && m.timestamp.toDate().toISOString().split('T')[0] === today).reduce((sum, m) => sum + m.fat, 0);
-                dataLoaded.meals = true;
-                checkAllDataLoaded();
-            }));
+                const mealsColRef = query(collection(db, `artifacts/${appId}/users/${userId}/meals`));
+                unsubscribeListeners.push(onSnapshot(mealsColRef, (snapshot) => {
+                    console.log('Meals snapshot received.');
+                    meals = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a, b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
+                    const today = new Date().toISOString().split('T')[0];
+                    dailyMacros.protein = meals.filter(m => m.timestamp && m.timestamp.toDate().toISOString().split('T')[0] === today).reduce((sum, m) => sum + m.protein, 0);
+                    dailyMacros.carbs = meals.filter(m => m.timestamp && m.timestamp.toDate().toISOString().split('T')[0] === today).reduce((sum, m) => sum + m.carbs, 0);
+                    dailyMacros.fat = meals.filter(m => m.timestamp && m.timestamp.toDate().toISOString().split('T')[0] === today).reduce((sum, m) => sum + m.fat, 0);
+                    dataLoaded.meals = true;
+                    checkAllDataLoaded();
+                }));
 
-            // IMPORTANT: Removed orderBy() to avoid index errors. Data is now sorted in JavaScript.
-            const weightsColRef = query(collection(db, `artifacts/${appId}/users/${userId}/weights`));
-            unsubscribeListeners.push(onSnapshot(weightsColRef, (snapshot) => {
-                weightLog = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a, b) => new Date(a.date) - new Date(b.date));
-                dataLoaded.weights = true;
-                checkAllDataLoaded();
-            }));
+                const weightsColRef = query(collection(db, `artifacts/${appId}/users/${userId}/weights`));
+                unsubscribeListeners.push(onSnapshot(weightsColRef, (snapshot) => {
+                    console.log('Weights snapshot received.');
+                    weightLog = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a, b) => new Date(a.date) - new Date(b.date));
+                    dataLoaded.weights = true;
+                    checkAllDataLoaded();
+                }));
 
-            // IMPORTANT: Removed orderBy() to avoid index errors. Data is now sorted in JavaScript.
-            const measurementsColRef = query(collection(db, `artifacts/${appId}/users/${userId}/measurements`));
-            unsubscribeListeners.push(onSnapshot(measurementsColRef, (snapshot) => {
-                measurementsLog = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a, b) => new Date(a.date) - new Date(b.date));
-                dataLoaded.measurements = true;
-                checkAllDataLoaded();
-            }));
+                const measurementsColRef = query(collection(db, `artifacts/${appId}/users/${userId}/measurements`));
+                unsubscribeListeners.push(onSnapshot(measurementsColRef, (snapshot) => {
+                    console.log('Measurements snapshot received.');
+                    measurementsLog = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a, b) => new Date(a.date) - new Date(b.date));
+                    dataLoaded.measurements = true;
+                    checkAllDataLoaded();
+                }));
+            });
         }
-
-        function checkAllDataLoaded() {
-            if (Object.values(dataLoaded).every(status => status)) {
-                renderApp();
-            }
-        }
-
-        onAuthStateChanged(auth, (authUser) => {
+        
+        onAuthStateChanged(auth, async (authUser) => {
             if (authUser) {
                 user = authUser;
-                setupDataListeners(user.uid);
+                dataLoadingPromise = setupDataListeners(user.uid);
+                await dataLoadingPromise;
+                console.log('Rendering app after auth and data load.');
+                renderApp();
             } else {
                 user = null;
-                signInAnonymously(auth).catch((error) => {
+                try {
+                    const anonymousUser = await signInAnonymously(auth);
+                    user = anonymousUser.user;
+                    dataLoadingPromise = setupDataListeners(user.uid);
+                    await dataLoadingPromise;
+                    console.log('Rendering app after anonymous sign-in.');
+                    renderApp();
+                } catch (error) {
                     console.error("Anonymous sign-in failed:", error);
                     showMessage("Authentication failed. Please try again later.");
-                });
+                    root.innerHTML = `<div class="p-4 text-center text-red-400">Authentication failed. Please check the console for details.</div>`;
+                }
             }
         });
 
@@ -341,6 +366,7 @@
                     <div class="text-center">
                         <h2 class="text-4xl font-bold text-purple-400">Countdown & Gains</h2>
                         <p class="text-gray-400 mt-1">Your personal dashboard for wedding prep and fitness goals.</p>
+                        <p class="text-xs text-gray-500 mt-2">User ID: ${user.uid}</p>
                     </div>
                     <div class="flex flex-col md:flex-row space-y-4 md:space-y-0 md:space-x-4">
                         ${createCountdownElement("2025-12-29T00:00:00", "Time until Wedding")}
@@ -410,19 +436,19 @@
                     </h3>
                     <div class="flex justify-center space-x-4 text-gray-200">
                         <div class="flex flex-col items-center">
-                            <span class="text-4xl font-bold">${time.days}</span>
+                            <span class="text-4xl font-bold" data-countdown-days="${targetDate}">${time.days}</span>
                             <span class="text-sm text-gray-400">Days</span>
                         </div>
                         <div class="flex flex-col items-center">
-                            <span class="text-4xl font-bold">${time.hours}</span>
+                            <span class="text-4xl font-bold" data-countdown-hours="${targetDate}">${time.hours}</span>
                             <span class="text-sm text-gray-400">Hours</span>
                         </div>
                         <div class="flex flex-col items-center">
-                            <span class="text-4xl font-bold">${time.minutes}</span>
+                            <span class="text-4xl font-bold" data-countdown-minutes="${targetDate}">${time.minutes}</span>
                             <span class="text-sm text-gray-400">Minutes</span>
                         </div>
                         <div class="flex flex-col items-center">
-                            <span class="text-4xl font-bold">${time.seconds}</span>
+                            <span class="text-4xl font-bold" data-countdown-seconds="${targetDate}">${time.seconds}</span>
                             <span class="text-sm text-gray-400">Seconds</span>
                         </div>
                     </div>
@@ -432,11 +458,15 @@
 
         function renderMacros() {
             const messageEl = message ? `<div class="p-3 bg-purple-900 text-purple-200 rounded-lg text-sm text-center card">${message}</div>` : '';
-            const mealsListHtml = meals.map(meal => `
-                <li class="flex justify-between items-center bg-gray-800 p-2 rounded-md">
-                    <span>${meal.name}</span><span class="text-xs text-gray-400">P:${meal.protein} C:${meal.carbs} F:${meal.fat}</span>
-                </li>
-            `).join('');
+            const mealsListHtml = meals.map(meal => {
+                const mealDate = meal.timestamp ? meal.timestamp.toDate().toLocaleDateString() : 'N/A';
+                const mealTime = meal.timestamp ? meal.timestamp.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+                return `
+                    <li class="flex justify-between items-center bg-gray-800 p-2 rounded-md">
+                        <span>${meal.name}</span><span class="text-xs text-gray-400">P:${meal.protein} C:${meal.carbs} F:${meal.fat} (${mealDate} ${mealTime})</span>
+                    </li>
+                `;
+            }).join('');
             
             return `
                 <div class="space-y-6 text-gray-200 max-w-4xl mx-auto">
@@ -449,7 +479,7 @@
                     ${messageEl}
                     <div class="rounded-xl shadow-md p-6 card">
                         <h3 class="text-lg font-semibold flex items-center text-purple-300 mb-4">
-                            <i class="fas fa-utensils mr-2"></i> Today's Meal Tracker
+                            <i class="fas fa-utensils mr-2"></i> Today's Macro Progress
                         </h3>
                         <div class="grid grid-cols-3 gap-4 mb-4">
                             <div class="p-4 rounded-xl bg-gray-800">
@@ -540,7 +570,7 @@
                         <h3 class="text-lg font-semibold flex items-center text-purple-300 mb-4">
                             <i class="fas fa-chart-line mr-2"></i> Weight Progress
                         </h3>
-                        <div class="chart-container h-72">
+                        <div class="chart-container">
                             <canvas id="weightChart"></canvas>
                         </div>
                     </div>
@@ -601,7 +631,7 @@
                         <h3 class="text-lg font-semibold flex items-center text-purple-300 mb-4">
                             <i class="fas fa-chart-bar mr-2"></i> Measurements Progress
                         </h3>
-                        <div class="chart-container h-72">
+                        <div class="chart-container">
                             <canvas id="measurementsChart"></canvas>
                         </div>
                     </div>
@@ -622,7 +652,18 @@
         }
 
         // Main rendering function
-        function renderApp() {
+        async function renderApp() {
+            // Wait for data to load if it's not ready yet
+            if (dataLoadingPromise) {
+                try {
+                    await dataLoadingPromise;
+                } catch (e) {
+                    console.error("Data loading failed:", e);
+                    root.innerHTML = `<div class="p-4 text-center text-red-400">Error loading data. Please try again.</div>`;
+                    return;
+                }
+            }
+
             root.innerHTML = '';
             let content = '';
 
@@ -639,32 +680,25 @@
                 case 'measurements':
                     content = renderMeasurements();
                     break;
+                default:
+                    content = renderDashboard();
             }
 
-            if (Object.values(dataLoaded).every(status => status)) {
-                root.innerHTML = content;
-                attachEventListeners();
-                if (view === 'weights') {
-                    const labels = weightLog.map(log => log.date);
-                    const data = weightLog.map(log => log.weight);
-                    createLineChart('weightChart', [{ label: 'Weight (lbs)', data: data }], labels);
-                }
-                if (view === 'measurements') {
-                    const labels = measurementsLog.map(log => log.date);
-                    const datasets = [
-                        { label: 'Chest (in)', data: measurementsLog.map(log => log.chest), borderColor: '#f9a8d4', pointBackgroundColor: '#f9a8d4', pointHoverBorderColor: '#f9a8d4' },
-                        { label: 'Waist (in)', data: measurementsLog.map(log => log.waist), borderColor: '#a78bfa', pointBackgroundColor: '#a78bfa', pointHoverBorderColor: '#a78bfa' },
-                        { label: 'Thigh (in)', data: measurementsLog.map(log => log.thigh), borderColor: '#fde047', pointBackgroundColor: '#fde047', pointHoverBorderColor: '#fde047' }
-                    ];
-                    createLineChart('measurementsChart', datasets, labels);
-                }
-            } else {
-                root.innerHTML = `
-                    <div id="loading" class="flex flex-col items-center text-purple-300">
-                        <div class="loading-animation mb-4"></div>
-                        <p>Loading your data...</p>
-                    </div>
-                `;
+            root.innerHTML = content;
+            attachEventListeners();
+            if (view === 'weights') {
+                const labels = weightLog.map(log => log.date);
+                const data = weightLog.map(log => log.weight);
+                createLineChart('weightChart', [{ label: 'Weight (lbs)', data: data }], labels);
+            }
+            if (view === 'measurements') {
+                const labels = measurementsLog.map(log => log.date);
+                const datasets = [
+                    { label: 'Chest (in)', data: measurementsLog.map(log => log.chest), borderColor: '#f9a8d4', pointBackgroundColor: '#f9a8d4', pointHoverBorderColor: '#f9a8d4' },
+                    { label: 'Waist (in)', data: measurementsLog.map(log => log.waist), borderColor: '#a78bfa', pointBackgroundColor: '#a78bfa', pointHoverBorderColor: '#a78bfa' },
+                    { label: 'Thigh (in)', data: measurementsLog.map(log => log.thigh), borderColor: '#fde047', pointBackgroundColor: '#fde047', pointHoverBorderColor: '#fde047' }
+                ];
+                createLineChart('measurementsChart', datasets, labels);
             }
         }
 
@@ -692,34 +726,15 @@
 
         // Set up the countdown timer on the dashboard
         setInterval(() => {
-            if (view === 'dashboard' && Object.values(dataLoaded).every(status => status)) {
-                const countdownElements = root.querySelectorAll('[data-countdown]');
+            if (view === 'dashboard' && root) {
+                const countdownElements = root.querySelectorAll('[data-countdown-days]');
                 countdownElements.forEach(el => {
-                    const targetDate = el.dataset.countdown;
+                    const targetDate = el.dataset.countdownDays;
                     const time = calculateCountdown(targetDate);
-                    el.innerHTML = `
-                        <h3 class="text-xl font-bold mb-2 text-purple-300 flex items-center justify-center">
-                            <i class="fas fa-calendar-alt mr-2"></i> ${el.dataset.title}
-                        </h3>
-                        <div class="flex justify-center space-x-4 text-gray-200">
-                            <div class="flex flex-col items-center">
-                                <span class="text-4xl font-bold">${time.days}</span>
-                                <span class="text-sm text-gray-400">Days</span>
-                            </div>
-                            <div class="flex flex-col items-center">
-                                <span class="text-4xl font-bold">${time.hours}</span>
-                                <span class="text-sm text-gray-400">Hours</span>
-                            </div>
-                            <div class="flex flex-col items-center">
-                                <span class="text-4xl font-bold">${time.minutes}</span>
-                                <span class="text-sm text-gray-400">Minutes</span>
-                            </div>
-                            <div class="flex flex-col items-center">
-                                <span class="text-4xl font-bold">${time.seconds}</span>
-                                <span class="text-sm text-gray-400">Seconds</span>
-                            </div>
-                        </div>
-                    `;
+                    const parent = el.parentElement.parentElement;
+                    if (parent) {
+                        parent.innerHTML = createCountdownElement(targetDate, parent.querySelector('h3').textContent.replace('📅', '').trim());
+                    }
                 });
             }
         }, 1000);
