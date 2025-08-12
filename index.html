@@ -56,7 +56,7 @@
         // Import necessary Firebase libraries
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, setDoc, collection, onSnapshot, addDoc, query, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, doc, setDoc, collection, onSnapshot, addDoc, query, serverTimestamp, getDoc, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         
         // --- YOUR FIREBASE CONFIGURATION ---
         const firebaseConfig = {
@@ -86,7 +86,6 @@
         const auth = getAuth(app);
         const db = getFirestore(app);
 
-        let dataLoadingPromise;
         
         function showMessage(msg) {
             message = msg;
@@ -109,89 +108,105 @@
             return { days, hours, minutes, seconds };
         }
 
+        // Fetch initial data once using getDocs/getDoc, then setup real-time listeners.
+        async function fetchInitialData(userId) {
+            try {
+                // Fetch macro goals
+                const macroGoalsDoc = await getDoc(doc(db, `artifacts/${appId}/users/${userId}`));
+                if (macroGoalsDoc.exists() && macroGoalsDoc.data().macroGoals) {
+                    macroGoals = macroGoalsDoc.data().macroGoals;
+                } else {
+                    macroGoals = { protein: 137, carbs: 307, fat: 106 };
+                }
+
+                // Fetch meals
+                const mealsSnapshot = await getDocs(query(collection(db, `artifacts/${appId}/users/${userId}/meals`)));
+                meals = mealsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                const today = new Date().toISOString().split('T')[0];
+                dailyMacros.protein = meals.filter(m => m.timestamp && m.timestamp.toDate().toISOString().split('T')[0] === today).reduce((sum, m) => sum + m.protein, 0);
+                dailyMacros.carbs = meals.filter(m => m.timestamp && m.timestamp.toDate().toISOString().split('T')[0] === today).reduce((sum, m) => sum + m.carbs, 0);
+                dailyMacros.fat = meals.filter(m => m.timestamp && m.timestamp.toDate().toISOString().split('T')[0] === today).reduce((sum, m) => sum + m.fat, 0);
+                meals.sort((a, b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
+
+
+                // Fetch weight logs
+                const weightsSnapshot = await getDocs(query(collection(db, `artifacts/${appId}/users/${userId}/weights`)));
+                weightLog = weightsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                weightLog.sort((a, b) => new Date(a.date) - new Date(b.date));
+
+
+                // Fetch measurements
+                const measurementsSnapshot = await getDocs(query(collection(db, `artifacts/${appId}/users/${userId}/measurements`)));
+                measurementsLog = measurementsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                measurementsLog.sort((a, b) => new Date(a.date) - new Date(b.date));
+
+
+            } catch (e) {
+                console.error("Error fetching initial data:", e);
+                throw e; // Propagate the error so the main function can handle it
+            }
+        }
+        
+        // Setup real-time listeners after initial data is loaded
         function setupDataListeners(userId) {
             unsubscribeListeners.forEach(unsubscribe => unsubscribe());
             unsubscribeListeners = [];
             
-            return new Promise((resolve) => {
-                let dataLoaded = {
-                    macroGoals: false,
-                    meals: false,
-                    weights: false,
-                    measurements: false
-                };
+            const userDocRef = doc(db, `artifacts/${appId}/users/${userId}`);
+            unsubscribeListeners.push(onSnapshot(userDocRef, (doc) => {
+                if (doc.exists() && doc.data().macroGoals) {
+                    macroGoals = doc.data().macroGoals;
+                } else {
+                    macroGoals = { protein: 137, carbs: 307, fat: 106 };
+                }
+                renderApp();
+            }));
 
-                const checkAllDataLoaded = () => {
-                    if (Object.values(dataLoaded).every(status => status)) {
-                        console.log('All data loaded. Resolving promise.');
-                        resolve();
-                    }
-                };
-                
-                const userDocRef = doc(db, `artifacts/${appId}/users/${userId}`);
-                unsubscribeListeners.push(onSnapshot(userDocRef, (doc) => {
-                    console.log('Macro goals snapshot received.');
-                    if (doc.exists() && doc.data().macroGoals) {
-                        macroGoals = doc.data().macroGoals;
-                    } else {
-                        // Set default goals if none exist
-                        macroGoals = { protein: 137, carbs: 307, fat: 106 };
-                    }
-                    dataLoaded.macroGoals = true;
-                    checkAllDataLoaded();
-                }));
+            const mealsColRef = query(collection(db, `artifacts/${appId}/users/${userId}/meals`));
+            unsubscribeListeners.push(onSnapshot(mealsColRef, (snapshot) => {
+                meals = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a, b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
+                const today = new Date().toISOString().split('T')[0];
+                dailyMacros.protein = meals.filter(m => m.timestamp && m.timestamp.toDate().toISOString().split('T')[0] === today).reduce((sum, m) => sum + m.protein, 0);
+                dailyMacros.carbs = meals.filter(m => m.timestamp && m.timestamp.toDate().toISOString().split('T')[0] === today).reduce((sum, m) => sum + m.carbs, 0);
+                dailyMacros.fat = meals.filter(m => m.timestamp && m.timestamp.toDate().toISOString().split('T')[0] === today).reduce((sum, m) => sum + m.fat, 0);
+                renderApp();
+            }));
 
-                const mealsColRef = query(collection(db, `artifacts/${appId}/users/${userId}/meals`));
-                unsubscribeListeners.push(onSnapshot(mealsColRef, (snapshot) => {
-                    console.log('Meals snapshot received.');
-                    meals = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a, b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
-                    const today = new Date().toISOString().split('T')[0];
-                    dailyMacros.protein = meals.filter(m => m.timestamp && m.timestamp.toDate().toISOString().split('T')[0] === today).reduce((sum, m) => sum + m.protein, 0);
-                    dailyMacros.carbs = meals.filter(m => m.timestamp && m.timestamp.toDate().toISOString().split('T')[0] === today).reduce((sum, m) => sum + m.carbs, 0);
-                    dailyMacros.fat = meals.filter(m => m.timestamp && m.timestamp.toDate().toISOString().split('T')[0] === today).reduce((sum, m) => sum + m.fat, 0);
-                    dataLoaded.meals = true;
-                    checkAllDataLoaded();
-                }));
+            const weightsColRef = query(collection(db, `artifacts/${appId}/users/${userId}/weights`));
+            unsubscribeListeners.push(onSnapshot(weightsColRef, (snapshot) => {
+                weightLog = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a, b) => new Date(a.date) - new Date(b.date));
+                renderApp();
+            }));
 
-                const weightsColRef = query(collection(db, `artifacts/${appId}/users/${userId}/weights`));
-                unsubscribeListeners.push(onSnapshot(weightsColRef, (snapshot) => {
-                    console.log('Weights snapshot received.');
-                    weightLog = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a, b) => new Date(a.date) - new Date(b.date));
-                    dataLoaded.weights = true;
-                    checkAllDataLoaded();
-                }));
-
-                const measurementsColRef = query(collection(db, `artifacts/${appId}/users/${userId}/measurements`));
-                unsubscribeListeners.push(onSnapshot(measurementsColRef, (snapshot) => {
-                    console.log('Measurements snapshot received.');
-                    measurementsLog = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a, b) => new Date(a.date) - new Date(b.date));
-                    dataLoaded.measurements = true;
-                    checkAllDataLoaded();
-                }));
-            });
+            const measurementsColRef = query(collection(db, `artifacts/${appId}/users/${userId}/measurements`));
+            unsubscribeListeners.push(onSnapshot(measurementsColRef, (snapshot) => {
+                measurementsLog = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a, b) => new Date(a.date) - new Date(b.date));
+                renderApp();
+            }));
         }
         
         onAuthStateChanged(auth, async (authUser) => {
             if (authUser) {
                 user = authUser;
-                dataLoadingPromise = setupDataListeners(user.uid);
-                await dataLoadingPromise;
-                console.log('Rendering app after auth and data load.');
-                renderApp();
             } else {
-                user = null;
                 try {
                     const anonymousUser = await signInAnonymously(auth);
                     user = anonymousUser.user;
-                    dataLoadingPromise = setupDataListeners(user.uid);
-                    await dataLoadingPromise;
-                    console.log('Rendering app after anonymous sign-in.');
-                    renderApp();
                 } catch (error) {
                     console.error("Anonymous sign-in failed:", error);
-                    showMessage("Authentication failed. Please try again later.");
-                    root.innerHTML = `<div class="p-4 text-center text-red-400">Authentication failed. Please check the console for details.</div>`;
+                    root.innerHTML = `<div class="p-4 text-center text-red-400">Authentication failed. Please try again later.</div>`;
+                    return;
                 }
+            }
+
+            // After a user is authenticated, fetch the initial data and then render.
+            try {
+                await fetchInitialData(user.uid);
+                setupDataListeners(user.uid); // Attach real-time listeners after initial data fetch
+                renderApp(); // Initial render
+            } catch (e) {
+                console.error("Critical error during initial data load:", e);
+                root.innerHTML = `<div class="p-4 text-center text-red-400">Error loading data. Please try refreshing the page.</div>`;
             }
         });
 
@@ -201,12 +216,7 @@
             const newProtein = Number(form.protein.value);
             const newCarbs = Number(form.carbs.value);
             const newFat = Number(form.fat.value);
-
-            if (!user) {
-                showMessage('Authentication not complete. Please wait.');
-                return;
-            }
-            
+            if (!user) { showMessage('Authentication not complete. Please wait.'); return; }
             try {
                 const userDocRef = doc(db, `artifacts/${appId}/users/${user.uid}`);
                 await setDoc(userDocRef, { macroGoals: { protein: newProtein, carbs: newCarbs, fat: newFat } }, { merge: true });
@@ -224,16 +234,8 @@
             const protein = Number(form.protein.value);
             const carbs = Number(form.carbs.value);
             const fat = Number(form.fat.value);
-        
-            if (!name || !protein || !carbs || !fat) {
-                showMessage('Please fill out all meal fields.');
-                return;
-            }
-            if (!user) {
-                showMessage('Authentication not complete. Please wait.');
-                return;
-            }
-            
+            if (!name || !protein || !carbs || !fat) { showMessage('Please fill out all meal fields.'); return; }
+            if (!user) { showMessage('Authentication not complete. Please wait.'); return; }
             try {
                 const mealsColRef = collection(db, `artifacts/${appId}/users/${user.uid}/meals`);
                 await addDoc(mealsColRef, { name, protein, carbs, fat, timestamp: serverTimestamp() });
@@ -250,15 +252,8 @@
             const form = e.target;
             const weight = Number(form.weight.value);
             const date = form.date.value;
-            if (!weight || !date) {
-                showMessage('Please enter a weight and select a date.');
-                return;
-            }
-            if (!user) {
-                showMessage('Authentication not complete. Please wait.');
-                return;
-            }
-
+            if (!weight || !date) { showMessage('Please enter a weight and select a date.'); return; }
+            if (!user) { showMessage('Authentication not complete. Please wait.'); return; }
             try {
                 const weightsColRef = collection(db, `artifacts/${appId}/users/${user.uid}/weights`);
                 await addDoc(weightsColRef, { weight, date, timestamp: serverTimestamp() });
@@ -277,15 +272,8 @@
             const chest = Number(form.chest.value);
             const waist = Number(form.waist.value);
             const thigh = Number(form.thigh.value);
-            if (!chest || !waist || !thigh || !date) {
-                showMessage('Please enter all measurements and a date.');
-                return;
-            }
-            if (!user) {
-                showMessage('Authentication not complete. Please wait.');
-                return;
-            }
-
+            if (!chest || !waist || !thigh || !date) { showMessage('Please enter all measurements and a date.'); return; }
+            if (!user) { showMessage('Authentication not complete. Please wait.'); return; }
             try {
                 const measurementsColRef = collection(db, `artifacts/${appId}/users/${user.uid}/measurements`);
                 await addDoc(measurementsColRef, { chest, waist, thigh, date, timestamp: serverTimestamp() });
@@ -300,12 +288,8 @@
         function createLineChart(canvasId, datasets, labels) {
             const ctx = document.getElementById(canvasId);
             if (!ctx) return;
-            
             const existingChart = Chart.getChart(ctx);
-            if (existingChart) {
-                existingChart.destroy();
-            }
-
+            if (existingChart) { existingChart.destroy(); }
             new Chart(ctx, {
                 type: 'line',
                 data: {
@@ -335,25 +319,13 @@
                     scales: {
                         y: {
                             beginAtZero: false,
-                            title: {
-                                display: true,
-                                text: datasets[0].label.split(' ')[0],
-                                color: '#e5e7eb'
-                            },
-                            ticks: {
-                                color: '#e5e7eb'
-                            },
-                            grid: {
-                                color: '#3f3f46'
-                            }
+                            title: { display: true, text: datasets[0].label.split(' ')[0], color: '#e5e7eb' },
+                            ticks: { color: '#e5e7eb' },
+                            grid: { color: '#3f3f46' }
                         },
                         x: {
-                            ticks: {
-                                color: '#e5e7eb'
-                            },
-                            grid: {
-                                color: '#3f3f46'
-                            }
+                            ticks: { color: '#e5e7eb' },
+                            grid: { color: '#3f3f46' }
                         }
                     }
                 }
@@ -549,14 +521,7 @@
             const messageEl = message ? `<div class="p-3 bg-purple-900 text-purple-200 rounded-lg text-sm text-center card">${message}</div>` : '';
             const labels = weightLog.map(log => log.date);
             const data = weightLog.map(log => log.weight);
-            const datasets = [{
-                label: 'Weight (lbs)',
-                data: data,
-                borderColor: '#8b5cf6',
-                pointBackgroundColor: '#8b5cf6',
-                pointHoverBorderColor: '#8b5cf6',
-            }];
-
+            const datasets = [{ label: 'Weight (lbs)', data: data, borderColor: '#8b5cf6', pointBackgroundColor: '#8b5cf6', pointHoverBorderColor: '#8b5cf6' }];
             return `
                 <div class="space-y-6 text-gray-200 max-w-4xl mx-auto">
                     <div class="flex justify-between items-center mb-4">
@@ -592,32 +557,10 @@
             const messageEl = message ? `<div class="p-3 bg-purple-900 text-purple-200 rounded-lg text-sm text-center card">${message}</div>` : '';
             const labels = measurementsLog.map(log => log.date);
             const datasets = [
-                {
-                    label: 'Chest (in)',
-                    data: measurementsLog.map(log => log.chest),
-                    borderColor: '#f9a8d4', // Pink
-                    backgroundColor: 'rgba(249, 168, 212, 0.2)',
-                    pointBackgroundColor: '#f9a8d4',
-                    pointHoverBorderColor: '#f9a8d4',
-                },
-                {
-                    label: 'Waist (in)',
-                    data: measurementsLog.map(log => log.waist),
-                    borderColor: '#a78bfa', // Lighter purple
-                    backgroundColor: 'rgba(167, 139, 250, 0.2)',
-                    pointBackgroundColor: '#a78bfa',
-                    pointHoverBorderColor: '#a78bfa',
-                },
-                {
-                    label: 'Thigh (in)',
-                    data: measurementsLog.map(log => log.thigh),
-                    borderColor: '#fde047', // Yellow
-                    backgroundColor: 'rgba(253, 224, 71, 0.2)',
-                    pointBackgroundColor: '#fde047',
-                    pointHoverBorderColor: '#fde047',
-                }
+                { label: 'Chest (in)', data: measurementsLog.map(log => log.chest), borderColor: '#f9a8d4', backgroundColor: 'rgba(249, 168, 212, 0.2)', pointBackgroundColor: '#f9a8d4', pointHoverBorderColor: '#f9a8d4' },
+                { label: 'Waist (in)', data: measurementsLog.map(log => log.waist), borderColor: '#a78bfa', backgroundColor: 'rgba(167, 139, 250, 0.2)', pointBackgroundColor: '#a78bfa', pointHoverBorderColor: '#a78bfa' },
+                { label: 'Thigh (in)', data: measurementsLog.map(log => log.thigh), borderColor: '#fde047', backgroundColor: 'rgba(253, 224, 71, 0.2)', pointBackgroundColor: '#fde047', pointHoverBorderColor: '#fde047' }
             ];
-
             return `
                 <div class="space-y-6 text-gray-200 max-w-4xl mx-auto">
                     <div class="flex justify-between items-center mb-4">
@@ -653,20 +596,8 @@
 
         // Main rendering function
         async function renderApp() {
-            // Wait for data to load if it's not ready yet
-            if (dataLoadingPromise) {
-                try {
-                    await dataLoadingPromise;
-                } catch (e) {
-                    console.error("Data loading failed:", e);
-                    root.innerHTML = `<div class="p-4 text-center text-red-400">Error loading data. Please try again.</div>`;
-                    return;
-                }
-            }
-
             root.innerHTML = '';
             let content = '';
-
             switch(view) {
                 case 'dashboard':
                     content = renderDashboard();
@@ -683,7 +614,6 @@
                 default:
                     content = renderDashboard();
             }
-
             root.innerHTML = content;
             attachEventListeners();
             if (view === 'weights') {
@@ -705,13 +635,10 @@
         function attachEventListeners() {
             const addMealForm = document.getElementById('addMealForm');
             if (addMealForm) addMealForm.addEventListener('submit', handleAddMeal);
-
             const updateMacroGoalsForm = document.getElementById('updateMacroGoalsForm');
             if (updateMacroGoalsForm) updateMacroGoalsForm.addEventListener('submit', handleUpdateMacroGoals);
-
             const addWeightForm = document.getElementById('addWeightForm');
             if (addWeightForm) addWeightForm.addEventListener('submit', handleAddWeight);
-
             const addMeasurementsForm = document.getElementById('addMeasurementsForm');
             if (addMeasurementsForm) addMeasurementsForm.addEventListener('submit', handleAddMeasurements);
         }
@@ -740,7 +667,7 @@
         }, 1000);
 
         window.onload = function() {
-            // Initial render call will be handled by the auth state change listener
+            // The onAuthStateChanged listener handles the initial rendering.
         };
     </script>
 </body>
