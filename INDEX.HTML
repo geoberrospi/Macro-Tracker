@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Personal Tracker</title>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module">
+        // Firebase and Firestore imports
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, getDoc, setDoc, updateDoc, onSnapshot, collection, query, addDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Expose Firebase modules to the global window object for use in Babel
+        window.firebase = {
+            initializeApp, getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, getFirestore, doc, getDoc, setDoc, updateDoc, onSnapshot, collection, query, addDoc
+        };
+    </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #111827; /* Dark background */
+        }
+        .loading-animation {
+            border: 4px solid #1f2937;
+            border-top: 4px solid #3b82f6;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+        const { initializeApp, getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged, getFirestore, doc, setDoc, onSnapshot, collection, query, addDoc } = window.firebase;
+
+        // Global variables for Firebase configuration provided by the environment
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        const firebaseApp = initializeApp(firebaseConfig);
+        const auth = getAuth(firebaseApp);
+        const db = getFirestore(firebaseApp);
+        
+        // Define initial macro goals
+        const initialMacroGoals = { protein: 137, carbs: 307, fat: 106 };
+
+        function App() {
+            const [user, setUser] = useState(null);
+            const [isAuthReady, setIsAuthReady] = useState(false);
+            const [view, setView] = useState('dashboard');
+            const [macroGoals, setMacroGoals] = useState(initialMacroGoals);
+            const [dailyMacros, setDailyMacros] = useState({ protein: 0, carbs: 0, fat: 0 });
+            const [meals, setMeals] = useState([]);
+            const [weightLog, setWeightLog] = useState([]);
+            const [measurementsLog, setMeasurementsLog] = useState([]);
+            const [message, setMessage] = useState('');
+            const [inputMeal, setInputMeal] = useState({ name: '', protein: '', carbs: '', fat: '' });
+            const [inputWeight, setInputWeight] = useState('');
+            const [inputMeasurements, setInputMeasurements] = useState({ chest: '', waist: '', thigh: '' });
+
+            // Authentication and data fetching
+            useEffect(() => {
+                const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
+                    if (currentUser) {
+                        setUser(currentUser);
+                    } else {
+                        try {
+                            if (initialAuthToken) {
+                                await signInWithCustomToken(auth, initialAuthToken);
+                            } else {
+                                await signInAnonymously(auth);
+                            }
+                        } catch (error) {
+                            console.error("Authentication error:", error);
+                        }
+                    }
+                    setIsAuthReady(true);
+                });
+                return () => unsubscribeAuth();
+            }, []);
+
+            useEffect(() => {
+                if (!user || !isAuthReady) return;
+
+                const userId = auth.currentUser.uid;
+                const userDocRef = doc(db, `/artifacts/${appId}/users/${userId}`);
+
+                // Listener for general data (macro goals)
+                const unsubscribeGoals = onSnapshot(userDocRef, (docSnap) => {
+                    if (docSnap.exists() && docSnap.data().macroGoals) {
+                        setMacroGoals(docSnap.data().macroGoals);
+                    }
+                }, (error) => {
+                    console.error("Error fetching macro goals:", error);
+                });
+
+                // Listener for daily macros and meals
+                const unsubscribeMeals = onSnapshot(collection(userDocRef, 'meals'), (snapshot) => {
+                    const newMeals = [];
+                    let totalProtein = 0;
+                    let totalCarbs = 0;
+                    let totalFat = 0;
+                    snapshot.forEach(doc => {
+                        const meal = doc.data();
+                        newMeals.push({ id: doc.id, ...meal });
+                        totalProtein += meal.protein;
+                        totalCarbs += meal.carbs;
+                        totalFat += meal.fat;
+                    });
+                    setMeals(newMeals);
+                    setDailyMacros({ protein: totalProtein, carbs: totalCarbs, fat: totalFat });
+                }, (error) => {
+                    console.error("Error fetching meals:", error);
+                });
+
+                // Listener for weight log
+                const unsubscribeWeight = onSnapshot(collection(userDocRef, 'weights'), (snapshot) => {
+                    const weights = [];
+                    snapshot.forEach(doc => weights.push({ id: doc.id, ...doc.data() }));
+                    weights.sort((a, b) => a.date.localeCompare(b.date)); // Sort by date
+                    setWeightLog(weights);
+                }, (error) => {
+                    console.error("Error fetching weights:", error);
+                });
+
+                // Listener for measurements
+                const unsubscribeMeasurements = onSnapshot(collection(userDocRef, 'measurements'), (snapshot) => {
+                    const measurements = [];
+                    snapshot.forEach(doc => measurements.push({ id: doc.id, ...doc.data() }));
+                    measurements.sort((a, b) => a.date.localeCompare(b.date)); // Sort by date
+                    setMeasurementsLog(measurements);
+                }, (error) => {
+                    console.error("Error fetching measurements:", error);
+                });
+
+                return () => {
+                    unsubscribeGoals();
+                    unsubscribeMeals();
+                    unsubscribeWeight();
+                    unsubscribeMeasurements();
+                };
+            }, [user, isAuthReady]);
+
+            // Handle date for countdown
+            const calculateCountdown = (targetDate) => {
+                const now = new Date();
+                const target = new Date(targetDate);
+                const diff = target - now;
+
+                if (diff <= 0) return { days: 0, hours: 0, minutes: 0, seconds: 0 };
+
+                const seconds = Math.floor((diff / 1000) % 60);
+                const minutes = Math.floor((diff / 1000 / 60) % 60);
+                const hours = Math.floor((diff / (1000 * 60 * 60)) % 24);
+                const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+                return { days, hours, minutes, seconds };
+            };
+
+            const CountdownDisplay = ({ targetDate, title }) => {
+                const [time, setTime] = useState(calculateCountdown(targetDate));
+
+                useEffect(() => {
+                    const timer = setInterval(() => {
+                        setTime(calculateCountdown(targetDate));
+                    }, 1000);
+                    return () => clearInterval(timer);
+                }, [targetDate]);
+
+                return (
+                    <div className="flex flex-col items-center p-4 bg-gray-800 rounded-lg shadow-md w-full">
+                        <h3 className="text-xl font-bold mb-2 text-blue-400">{title}</h3>
+                        <div className="flex justify-center space-x-4 text-white">
+                            <div className="flex flex-col items-center">
+                                <span className="text-4xl font-bold">{time.days}</span>
+                                <span className="text-sm text-gray-400">Days</span>
+                            </div>
+                            <div className="flex flex-col items-center">
+                                <span className="text-4xl font-bold">{time.hours}</span>
+                                <span className="text-sm text-gray-400">Hours</span>
+                            </div>
+                            <div className="flex flex-col items-center">
+                                <span className="text-4xl font-bold">{time.minutes}</span>
+                                <span className="text-sm text-gray-400">Minutes</span>
+                            </div>
+                            <div className="flex flex-col items-center">
+                                <span className="text-4xl font-bold">{time.seconds}</span>
+                                <span className="text-sm text-gray-400">Seconds</span>
+                            </div>
+                        </div>
+                    </div>
+                );
+            };
+
+            const handleUpdateMacroGoals = async (e) => {
+                e.preventDefault();
+                const form = e.target;
+                const newProtein = Number(form.protein.value);
+                const newCarbs = Number(form.carbs.value);
+                const newFat = Number(form.fat.value);
+
+                if (!user) {
+                    setMessage('Please wait for authentication to complete.');
+                    return;
+                }
+                const userId = auth.currentUser.uid;
+                const userDocRef = doc(db, `/artifacts/${appId}/users/${userId}`);
+                try {
+                    await setDoc(userDocRef, { macroGoals: { protein: newProtein, carbs: newCarbs, fat: newFat } }, { merge: true });
+                    setMessage('Macro goals updated successfully!');
+                } catch (e) {
+                    console.error("Error updating macro goals: ", e);
+                    setMessage('Failed to update macro goals.');
+                }
+            };
+            
+            const handleAddMeal = async (e) => {
+                e.preventDefault();
+                if (!inputMeal.name || !inputMeal.protein || !inputMeal.carbs || !inputMeal.fat) {
+                    setMessage('Please fill out all meal fields.');
+                    return;
+                }
+                if (!user) {
+                    setMessage('Please wait for authentication to complete.');
+                    return;
+                }
+
+                const userId = auth.currentUser.uid;
+                const userDocRef = doc(db, `/artifacts/${appId}/users/${userId}`);
+                const mealsColRef = collection(userDocRef, 'meals');
+
+                try {
+                    await addDoc(mealsColRef, {
+                        name: inputMeal.name,
+                        protein: Number(inputMeal.protein),
+                        carbs: Number(inputMeal.carbs),
+                        fat: Number(inputMeal.fat),
+                        timestamp: Date.now(),
+                    });
+                    setInputMeal({ name: '', protein: '', carbs: '', fat: '' });
+                    setMessage('Meal added successfully!');
+                } catch (e) {
+                    console.error("Error adding meal:", e);
+                    setMessage('Failed to add meal.');
+                }
+            };
+
+            const handleAddWeight = async (e) => {
+                e.preventDefault();
+                if (!inputWeight) {
+                    setMessage('Please enter a weight.');
+                    return;
+                }
+                if (!user) {
+                    setMessage('Please wait for authentication to complete.');
+                    return;
+                }
+                const userId = auth.currentUser.uid;
+                const userDocRef = doc(db, `/artifacts/${appId}/users/${userId}`);
+                const weightsColRef = collection(userDocRef, 'weights');
+
+                try {
+                    await addDoc(weightsColRef, {
+                        weight: Number(inputWeight),
+                        date: new Date().toISOString().split('T')[0],
+                        timestamp: Date.now(),
+                    });
+                    setInputWeight('');
+                    setMessage('Weight added successfully!');
+                } catch (e) {
+                    console.error("Error adding weight:", e);
+                    setMessage('Failed to add weight.');
+                }
+            };
+            
+            const handleAddMeasurements = async (e) => {
+                e.preventDefault();
+                if (!inputMeasurements.chest || !inputMeasurements.waist || !inputMeasurements.thigh) {
+                    setMessage('Please enter all measurements.');
+                    return;
+                }
+                if (!user) {
+                    setMessage('Please wait for authentication to complete.');
+                    return;
+                }
+                const userId = auth.currentUser.uid;
+                const userDocRef = doc(db, `/artifacts/${appId}/users/${userId}`);
+                const measurementsColRef = collection(userDocRef, 'measurements');
+
+                try {
+                    await addDoc(measurementsColRef, {
+                        chest: Number(inputMeasurements.chest),
+                        waist: Number(inputMeasurements.waist),
+                        thigh: Number(inputMeasurements.thigh),
+                        date: new Date().toISOString().split('T')[0],
+                        timestamp: Date.now(),
+                    });
+                    setInputMeasurements({ chest: '', waist: '', thigh: '' });
+                    setMessage('Measurements added successfully!');
+                } catch (e) {
+                    console.error("Error adding measurements:", e);
+                    setMessage('Failed to add measurements.');
+                }
+            };
+
+            const getMealAdvice = () => {
+                const { protein, carbs, fat } = inputMeal;
+                const remaining = {
+                    protein: macroGoals.protein - dailyMacros.protein,
+                    carbs: macroGoals.carbs - dailyMacros.carbs,
+                    fat: macroGoals.fat - dailyMacros.fat,
+                };
+                const isGoodIdea = Number(protein) <= remaining.protein && Number(carbs) <= remaining.carbs && Number(fat) <= remaining.fat;
+
+                if (!protein || !carbs || !fat) {
+                    return null;
+                }
+                
+                return isGoodIdea
+                    ? <p className="text-green-400 font-bold mt-2">✅ This is a good idea to eat!</p>
+                    : <p className="text-red-400 font-bold mt-2">❌ This will exceed your goals. Maybe reconsider?</p>;
+            };
+
+            if (!isAuthReady) {
+                return (
+                    <div className="flex items-center justify-center min-h-screen bg-gray-900">
+                        <div className="loading-animation"></div>
+                    </div>
+                );
+            }
+
+            const renderView = () => {
+                switch (view) {
+                    case 'dashboard':
+                        return (
+                            <div className="space-y-6">
+                                <CountdownDisplay targetDate="2025-12-29T00:00:00" title="Time until Wedding" />
+                                <div className="bg-gray-800 text-white rounded-lg shadow-md p-6 text-center">
+                                    <p className="text-xl font-semibold italic text-blue-400">"You can do it. Every small step forward is a victory."</p>
+                                </div>
+                                <CountdownDisplay targetDate="2025-10-31T00:00:00" title="Time until Josh's Wedding" />
+                            </div>
+                        );
+                    case 'macros':
+                        return (
+                            <div className="space-y-6 text-white">
+                                <h2 className="text-2xl font-bold text-center text-blue-400">Macro Tracker</h2>
+                                <p className="text-gray-400 text-sm text-center">User ID: {user?.uid}</p>
+                                {message && (
+                                    <div className="p-3 bg-blue-900 text-blue-300 rounded-lg text-sm text-center">{message}</div>
+                                )}
+                                
+                                {/* Macro Goals */}
+                                <div className="bg-gray-800 rounded-lg shadow-md p-4">
+                                    <h3 className="text-lg font-semibold mb-2">My Daily Macro Goals</h3>
+                                    <form onSubmit={handleUpdateMacroGoals} className="flex flex-col space-y-2">
+                                        <div className="grid grid-cols-3 gap-2">
+                                            <div>
+                                                <label className="text-xs text-gray-400">Protein (g)</label>
+                                                <input name="protein" type="number" defaultValue={macroGoals.protein} className="w-full border border-gray-700 rounded-md p-2 bg-gray-700 text-white" />
+                                            </div>
+                                            <div>
+                                                <label className="text-xs text-gray-400">Carbs (g)</label>
+                                                <input name="carbs" type="number" defaultValue={macroGoals.carbs} className="w-full border border-gray-700 rounded-md p-2 bg-gray-700 text-white" />
+                                            </div>
+                                            <div>
+                                                <label className="text-xs text-gray-400">Fat (g)</label>
+                                                <input name="fat" type="number" defaultValue={macroGoals.fat} className="w-full border border-gray-700 rounded-md p-2 bg-gray-700 text-white" />
+                                            </div>
+                                        </div>
+                                        <button type="submit" className="w-full bg-blue-600 text-white rounded-md py-2 hover:bg-blue-700 transition duration-300">Update Goals</button>
+                                    </form>
+                                </div>
+                                
+                                {/* Daily Progress */}
+                                <div className="bg-gray-800 rounded-lg shadow-md p-4">
+                                    <h3 className="text-lg font-semibold mb-2">Today's Progress</h3>
+                                    <div className="grid grid-cols-3 gap-2 text-center">
+                                        <div>
+                                            <span className="text-2xl font-bold">{dailyMacros.protein}g</span> / <span className="text-gray-400">{macroGoals.protein}g</span>
+                                            <p className="text-sm text-gray-400">Protein</p>
+                                        </div>
+                                        <div>
+                                            <span className="text-2xl font-bold">{dailyMacros.carbs}g</span> / <span className="text-gray-400">{macroGoals.carbs}g</span>
+                                            <p className="text-sm text-gray-400">Carbs</p>
+                                        </div>
+                                        <div>
+                                            <span className="text-2xl font-bold">{dailyMacros.fat}g</span> / <span className="text-gray-400">{macroGoals.fat}g</span>
+                                            <p className="text-sm text-gray-400">Fat</p>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Meal Input */}
+                                <div className="bg-gray-800 rounded-lg shadow-md p-4">
+                                    <h3 className="text-lg font-semibold mb-2">Add a Meal</h3>
+                                    <form onSubmit={handleAddMeal} className="flex flex-col space-y-2">
+                                        <input
+                                            type="text"
+                                            value={inputMeal.name}
+                                            onChange={(e) => setInputMeal({...inputMeal, name: e.target.value})}
+                                            placeholder="Meal Name (e.g., Chicken Salad)"
+                                            className="w-full border border-gray-700 rounded-md p-2 bg-gray-700 text-white"
+                                        />
+                                        <div className="grid grid-cols-3 gap-2">
+                                            <input
+                                                type="number"
+                                                value={inputMeal.protein}
+                                                onChange={(e) => setInputMeal({...inputMeal, protein: e.target.value})}
+                                                placeholder="Protein (g)"
+                                                className="w-full border border-gray-700 rounded-md p-2 bg-gray-700 text-white"
+                                            />
+                                            <input
+                                                type="number"
+                                                value={inputMeal.carbs}
+                                                onChange={(e) => setInputMeal({...inputMeal, carbs: e.target.value})}
+                                                placeholder="Carbs (g)"
+                                                className="w-full border border-gray-700 rounded-md p-2 bg-gray-700 text-white"
+                                            />
+                                            <input
+                                                type="number"
+                                                value={inputMeal.fat}
+                                                onChange={(e) => setInputMeal({...inputMeal, fat: e.target.value})}
+                                                placeholder="Fat (g)"
+                                                className="w-full border border-gray-700 rounded-md p-2 bg-gray-700 text-white"
+                                            />
+                                        </div>
+                                        {getMealAdvice()}
+                                        <button type="submit" className="w-full bg-green-600 text-white rounded-md py-2 hover:bg-green-700 transition duration-300">Log Meal</button>
+                                    </form>
+                                    <div className="mt-4">
+                                        <h4 className="font-semibold">Logged Meals:</h4>
+                                        <ul className="text-sm mt-2 space-y-1">
+                                            {meals.map(meal => (
+                                                <li key={meal.id} className="flex justify-between items-center bg-gray-700 p-2 rounded-md">
+                                                    <span>{meal.name}</span>
+                                                    <span className="text-xs text-gray-400">P:{meal.protein} C:{meal.carbs} F:{meal.fat}</span>
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+                        );
+                    case 'weights':
+                        return (
+                            <div className="space-y-6 text-white">
+                                <h2 className="text-2xl font-bold text-center text-blue-400">Weight Tracker</h2>
+                                <p className="text-gray-400 text-sm text-center">User ID: {user?.uid}</p>
+                                {message && (
+                                    <div className="p-3 bg-blue-900 text-blue-300 rounded-lg text-sm text-center">{message}</div>
+                                )}
+                                <div className="bg-gray-800 rounded-lg shadow-md p-4">
+                                    <h3 className="text-lg font-semibold mb-2">Log New Weight</h3>
+                                    <form onSubmit={handleAddWeight} className="flex flex-col space-y-2">
+                                        <input
+                                            type="number"
+                                            value={inputWeight}
+                                            onChange={(e) => setInputWeight(e.target.value)}
+                                            placeholder="Enter weight in lbs"
+                                            className="w-full border border-gray-700 rounded-md p-2 bg-gray-700 text-white"
+                                        />
+                                        <button type="submit" className="w-full bg-blue-600 text-white rounded-md py-2 hover:bg-blue-700 transition duration-300">Add Weight</button>
+                                    </form>
+                                </div>
+                                <div className="bg-gray-800 rounded-lg shadow-md p-4">
+                                    <h3 className="text-lg font-semibold mb-2">Weight History</h3>
+                                    <ul className="space-y-1">
+                                        {weightLog.map(log => (
+                                            <li key={log.id} className="flex justify-between p-2 bg-gray-700 rounded-md">
+                                                <span>{log.date}</span>
+                                                <span className="font-semibold">{log.weight} lbs</span>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            </div>
+                        );
+                    case 'measurements':
+                        return (
+                            <div className="space-y-6 text-white">
+                                <h2 className="text-2xl font-bold text-center text-blue-400">Measurements Tracker</h2>
+                                <p className="text-gray-400 text-sm text-center">User ID: {user?.uid}</p>
+                                {message && (
+                                    <div className="p-3 bg-blue-900 text-blue-300 rounded-lg text-sm text-center">{message}</div>
+                                )}
+                                <div className="bg-gray-800 rounded-lg shadow-md p-4">
+                                    <h3 className="text-lg font-semibold mb-2">Log New Measurements</h3>
+                                    <form onSubmit={handleAddMeasurements} className="flex flex-col space-y-2">
+                                        <input
+                                            type="number"
+                                            value={inputMeasurements.chest}
+                                            onChange={(e) => setInputMeasurements({...inputMeasurements, chest: e.target.value})}
+                                            placeholder="Chest (in)"
+                                            className="w-full border border-gray-700 rounded-md p-2 bg-gray-700 text-white"
+                                        />
+                                        <input
+                                            type="number"
+                                            value={inputMeasurements.waist}
+                                            onChange={(e) => setInputMeasurements({...inputMeasurements, waist: e.target.value})}
+                                            placeholder="Waist (in)"
+                                            className="w-full border border-gray-700 rounded-md p-2 bg-gray-700 text-white"
+                                        />
+                                        <input
+                                            type="number"
+                                            value={inputMeasurements.thigh}
+                                            onChange={(e) => setInputMeasurements({...inputMeasurements, thigh: e.target.value})}
+                                            placeholder="Thigh (in)"
+                                            className="w-full border border-gray-700 rounded-md p-2 bg-gray-700 text-white"
+                                        />
+                                        <button type="submit" className="w-full bg-blue-600 text-white rounded-md py-2 hover:bg-blue-700 transition duration-300">Add Measurements</button>
+                                    </form>
+                                </div>
+                                <div className="bg-gray-800 rounded-lg shadow-md p-4">
+                                    <h3 className="text-lg font-semibold mb-2">Measurements History</h3>
+                                    <ul className="space-y-1">
+                                        {measurementsLog.map(log => (
+                                            <li key={log.id} className="flex justify-between p-2 bg-gray-700 rounded-md text-sm">
+                                                <span>{log.date}</span>
+                                                <div className="flex space-x-4">
+                                                    <span>C: {log.chest}"</span>
+                                                    <span>W: {log.waist}"</span>
+                                                    <span>T: {log.thigh}"</span>
+                                                </div>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            </div>
+                        );
+                    default:
+                        return null;
+                }
+            };
+            
+            return (
+                <div className="min-h-screen bg-gray-900 flex flex-col items-center p-4">
+                    <header className="w-full max-w-2xl bg-gray-800 rounded-t-xl shadow-lg p-4 flex justify-around">
+                        <button onClick={() => setView('dashboard')} className={`p-2 rounded-lg font-semibold transition-colors duration-300 ${view === 'dashboard' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-700'}`}>Dashboard</button>
+                        <button onClick={() => setView('macros')} className={`p-2 rounded-lg font-semibold transition-colors duration-300 ${view === 'macros' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-700'}`}>Macros</button>
+                        <button onClick={() => setView('weights')} className={`p-2 rounded-lg font-semibold transition-colors duration-300 ${view === 'weights' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-700'}`}>Weights</button>
+                        <button onClick={() => setView('measurements')} className={`p-2 rounded-lg font-semibold transition-colors duration-300 ${view === 'measurements' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-700'}`}>Measurements</button>
+                    </header>
+                    <main className="w-full max-w-2xl bg-gray-900 rounded-b-xl shadow-lg p-6 flex-grow">
+                        {renderView()}
+                    </main>
+                    <footer className="mt-4 text-center text-gray-500 text-xs">
+                        &copy; 2025 Personal Tracker. User ID: {user?.uid}
+                    </footer>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
