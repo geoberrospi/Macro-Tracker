@@ -1,14 +1,15 @@
+Thank you for providing your Firebase configuration details. I've updated the code with your specific credentials. Here is the corrected and cleaned-up version of your code, ready to be deployed.
+
+HTML
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Personal Fitness Tracker</title>
-    <!-- Tailwind CSS for styling -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Chart.js for charts -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <!-- Font Awesome for icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
@@ -39,24 +40,32 @@
     </style>
 </head>
 <body class="bg-gray-950 text-gray-200">
-    <div id="root" class="min-h-screen flex">
-        <!-- The app content will be rendered here -->
+    <div id="root" class="min-h-screen flex flex-col items-center justify-center p-4">
+        <div id="loading" class="flex flex-col items-center text-purple-300">
+            <div class="loading-animation mb-4"></div>
+            <p>Loading your data...</p>
+        </div>
     </div>
 
     <script type="module">
-        // Import necessary Firebase libraries, including signInWithCustomToken
+        // Import necessary Firebase libraries
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, setDoc, collection, onSnapshot, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, collection, onSnapshot, addDoc, query, orderBy, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         
-        // Firebase project configuration. The `__` prefixed variables are provided by the environment.
-        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+        // --- YOUR ACTUAL FIREBASE CONFIGURATION ---
+        const firebaseConfig = {
+            apiKey: "AIzaSyBaSQUmyDz0XN2c1rlLRN_KwnCQ4HMJgqg",
+            authDomain: "countdown-gains.firebaseapp.com",
+            projectId: "countdown-gains",
+            storageBucket: "countdown-gains.firebasestorage.app",
+            messagingSenderId: "394980236780",
+            appId: "1:394980236780:web:d4e25fb0febd6a5f3374c9"
+        };
+        const appId = firebaseConfig.appId;
 
         // Global state variables
         let user = null;
-        let isAuthReady = false;
         let view = 'dashboard';
         let macroGoals = { protein: 137, carbs: 307, fat: 106 };
         let dailyMacros = { protein: 0, carbs: 0, fat: 0 };
@@ -65,21 +74,28 @@
         let measurementsLog = [];
         let message = '';
         const root = document.getElementById('root');
+        let unsubscribeListeners = []; // Array to hold unsubscribe functions
 
         // Initialize Firebase services
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
         const db = getFirestore(app);
-        let weightChartInstance = null;
-        let measurementsChartInstance = null;
+
+        // State to track if data has been loaded
+        let dataLoaded = {
+            macroGoals: false,
+            meals: false,
+            weights: false,
+            measurements: false
+        };
 
         // --- Utility Functions ---
-        function showMessage(msg, type = 'info') {
+        function showMessage(msg) {
             message = msg;
-            renderApp(); // Re-render to show the message
+            renderApp();
             setTimeout(() => {
                 message = '';
-                renderApp(); // Re-render to hide the message
+                renderApp();
             }, 3000);
         }
 
@@ -95,70 +111,71 @@
             return { days, hours, minutes, seconds };
         }
 
-        function createLineChart(canvasId, data, labels, labelText, yLabel) {
-            const ctx = document.getElementById(canvasId);
-            if (ctx) {
-                const existingChart = Chart.getChart(ctx);
-                if (existingChart) {
-                    existingChart.destroy();
-                }
+        // --- Firebase Listeners and Data Fetching ---
+        function setupDataListeners(userId) {
+            // Unsubscribe previous listeners to prevent memory leaks
+            unsubscribeListeners.forEach(unsubscribe => unsubscribe());
+            unsubscribeListeners = [];
 
-                new Chart(ctx, {
-                    type: 'line',
-                    data: {
-                        labels: labels,
-                        datasets: [{
-                            label: labelText,
-                            data: data,
-                            borderColor: '#8b5cf6', // Purple
-                            backgroundColor: 'rgba(139, 92, 246, 0.2)', // Semi-transparent purple
-                            tension: 0.4,
-                            fill: true,
-                            pointBackgroundColor: '#8b5cf6',
-                            pointBorderColor: '#fff',
-                            pointHoverBackgroundColor: '#fff',
-                            pointHoverBorderColor: '#8b5cf6',
-                        }]
-                    },
-                    options: {
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        plugins: {
-                            legend: {
-                                labels: {
-                                    color: '#e5e7eb' // Gray-200 for text
-                                }
-                            }
-                        },
-                        scales: {
-                            y: {
-                                beginAtZero: false,
-                                title: {
-                                    display: true,
-                                    text: yLabel,
-                                    color: '#e5e7eb'
-                                },
-                                ticks: {
-                                    color: '#e5e7eb'
-                                },
-                                grid: {
-                                    color: '#3f3f46' // Gray-700
-                                }
-                            },
-                            x: {
-                                ticks: {
-                                    color: '#e5e7eb'
-                                },
-                                grid: {
-                                    color: '#3f3f46' // Gray-700
-                                }
-                            }
-                        }
-                    }
-                });
+            // Macro Goals Listener
+            const userDocRef = doc(db, `artifacts/${appId}/users/${userId}`);
+            unsubscribeListeners.push(onSnapshot(userDocRef, (doc) => {
+                if (doc.exists() && doc.data().macroGoals) {
+                    macroGoals = doc.data().macroGoals;
+                }
+                dataLoaded.macroGoals = true;
+                checkAllDataLoaded();
+            }));
+
+            // Meals Listener
+            const mealsColRef = query(collection(db, `artifacts/${appId}/users/${userId}/meals`), orderBy('timestamp', 'desc'));
+            unsubscribeListeners.push(onSnapshot(mealsColRef, (snapshot) => {
+                meals = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                const today = new Date().toISOString().split('T')[0];
+                dailyMacros.protein = meals.filter(m => m.timestamp && m.timestamp.toDate().toISOString().split('T')[0] === today).reduce((sum, m) => sum + m.protein, 0);
+                dailyMacros.carbs = meals.filter(m => m.timestamp && m.timestamp.toDate().toISOString().split('T')[0] === today).reduce((sum, m) => sum + m.carbs, 0);
+                dailyMacros.fat = meals.filter(m => m.timestamp && m.timestamp.toDate().toISOString().split('T')[0] === today).reduce((sum, m) => sum + m.fat, 0);
+                dataLoaded.meals = true;
+                checkAllDataLoaded();
+            }));
+
+            // Weight Log Listener
+            const weightsColRef = query(collection(db, `artifacts/${appId}/users/${userId}/weights`), orderBy('date', 'asc'));
+            unsubscribeListeners.push(onSnapshot(weightsColRef, (snapshot) => {
+                weightLog = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                dataLoaded.weights = true;
+                checkAllDataLoaded();
+            }));
+
+            // Measurements Log Listener
+            const measurementsColRef = query(collection(db, `artifacts/${appId}/users/${userId}/measurements`), orderBy('date', 'asc'));
+            unsubscribeListeners.push(onSnapshot(measurementsColRef, (snapshot) => {
+                measurementsLog = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                dataLoaded.measurements = true;
+                checkAllDataLoaded();
+            }));
+        }
+
+        function checkAllDataLoaded() {
+            if (Object.values(dataLoaded).every(status => status)) {
+                renderApp();
             }
         }
 
+        // --- Authentication Logic ---
+        onAuthStateChanged(auth, (authUser) => {
+            if (authUser) {
+                user = authUser;
+                setupDataListeners(user.uid);
+            } else {
+                user = null;
+                // Sign in anonymously if no user is found
+                signInAnonymously(auth).catch((error) => {
+                    console.error("Anonymous sign-in failed:", error);
+                    showMessage("Authentication failed. Please try again later.");
+                });
+            }
+        });
 
         // --- Event Handlers ---
         async function handleUpdateMacroGoals(e) {
@@ -169,12 +186,12 @@
             const newFat = Number(form.fat.value);
 
             if (!user) {
-                showMessage('Please wait for authentication to complete.');
+                showMessage('Authentication not complete. Please wait.');
                 return;
             }
-            const userId = auth.currentUser.uid;
-            const userDocRef = doc(db, `/artifacts/${appId}/users/${userId}`);
+            
             try {
+                const userDocRef = doc(db, `artifacts/${appId}/users/${user.uid}`);
                 await setDoc(userDocRef, { macroGoals: { protein: newProtein, carbs: newCarbs, fat: newFat } }, { merge: true });
                 showMessage('Macro goals updated successfully!');
             } catch (e) {
@@ -190,18 +207,18 @@
             const protein = Number(form.protein.value);
             const carbs = Number(form.carbs.value);
             const fat = Number(form.fat.value);
-
+        
             if (!name || !protein || !carbs || !fat) {
                 showMessage('Please fill out all meal fields.');
                 return;
             }
             if (!user) {
-                showMessage('Please wait for authentication to complete.');
+                showMessage('Authentication not complete. Please wait.');
                 return;
             }
-            const userId = auth.currentUser.uid;
-            const mealsColRef = collection(db, `/artifacts/${appId}/users/${userId}/meals`);
+            
             try {
+                const mealsColRef = collection(db, `artifacts/${appId}/users/${user.uid}/meals`);
                 await addDoc(mealsColRef, { name, protein, carbs, fat, timestamp: serverTimestamp() });
                 form.reset();
                 showMessage('Meal added successfully!');
@@ -214,24 +231,21 @@
         async function handleAddWeight(e) {
             e.preventDefault();
             const form = e.target;
-            const weightInput = form.weight;
-            const dateInput = form.date;
-            const weight = Number(weightInput.value);
-            const date = dateInput.value;
+            const weight = Number(form.weight.value);
+            const date = form.date.value;
             if (!weight || !date) {
                 showMessage('Please enter a weight and select a date.');
                 return;
             }
             if (!user) {
-                showMessage('Please wait for authentication to complete.');
+                showMessage('Authentication not complete. Please wait.');
                 return;
             }
-            const userId = auth.currentUser.uid;
-            const weightsColRef = collection(db, `/artifacts/${appId}/users/${userId}/weights`);
+
             try {
+                const weightsColRef = collection(db, `artifacts/${appId}/users/${user.uid}/weights`);
                 await addDoc(weightsColRef, { weight, date, timestamp: serverTimestamp() });
-                weightInput.value = '';
-                dateInput.value = '';
+                form.reset();
                 showMessage('Weight added successfully!');
             } catch (e) {
                 console.error("Error adding weight:", e);
@@ -251,12 +265,12 @@
                 return;
             }
             if (!user) {
-                showMessage('Please wait for authentication to complete.');
+                showMessage('Authentication not complete. Please wait.');
                 return;
             }
-            const userId = auth.currentUser.uid;
-            const measurementsColRef = collection(db, `/artifacts/${appId}/users/${userId}/measurements`);
+
             try {
+                const measurementsColRef = collection(db, `artifacts/${appId}/users/${user.uid}/measurements`);
                 await addDoc(measurementsColRef, { chest, waist, thigh, date, timestamp: serverTimestamp() });
                 form.reset();
                 showMessage('Measurements added successfully!');
@@ -266,27 +280,122 @@
             }
         }
 
-        // --- Renderer Functions ---
-        function createCountdownElement(targetDate, title) {
-            // Create a safe ID by removing all non-alphanumeric characters.
-            const safeId = "countdown-" + title.replace(/[^a-zA-Z0-9]/g, '');
-            const container = document.createElement('div');
-            container.className = "flex-1 p-6 rounded-xl shadow-md text-center card";
+        // --- Chart Functions ---
+        function createLineChart(canvasId, datasets, labels) {
+            const ctx = document.getElementById(canvasId);
+            if (!ctx) return;
             
-            container.innerHTML = `
-                <h3 class="text-xl font-bold mb-2 text-purple-300 flex items-center justify-center">
-                    <i class="fas fa-calendar-alt mr-2"></i> ${title}
-                </h3>
-                <div class="flex justify-center space-x-4 text-gray-200" id="${safeId}">
-                    <!-- Countdown numbers will be injected here -->
+            const existingChart = Chart.getChart(ctx);
+            if (existingChart) {
+                existingChart.destroy();
+            }
+
+            new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: datasets.map(dataset => ({
+                        ...dataset,
+                        borderColor: dataset.borderColor || '#8b5cf6', // Use provided color or default
+                        backgroundColor: dataset.backgroundColor || 'rgba(139, 92, 246, 0.2)', // Use provided color or default
+                        tension: 0.4,
+                        fill: true,
+                        pointBackgroundColor: dataset.pointBackgroundColor || '#8b5cf6',
+                        pointBorderColor: '#fff',
+                        pointHoverBackgroundColor: '#fff',
+                        pointHoverBorderColor: dataset.pointHoverBorderColor || '#8b5cf6',
+                    }))
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            labels: {
+                                color: '#e5e7eb'
+                            }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: false,
+                            title: {
+                                display: true,
+                                text: datasets[0].label.split(' ')[0],
+                                color: '#e5e7eb'
+                            },
+                            ticks: {
+                                color: '#e5e7eb'
+                            },
+                            grid: {
+                                color: '#3f3f46'
+                            }
+                        },
+                        x: {
+                            ticks: {
+                                color: '#e5e7eb'
+                            },
+                            grid: {
+                                color: '#3f3f46'
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+
+        // --- Renderer Functions ---
+        function renderDashboard() {
+            return `
+                <div class="space-y-6 max-w-4xl mx-auto">
+                    <div class="text-center">
+                        <h2 class="text-4xl font-bold text-purple-400">Countdown & Gains</h2>
+                        <p class="text-gray-400 mt-1">Your personal dashboard for wedding prep and fitness goals.</p>
+                    </div>
+                    <div class="flex space-x-4">
+                        ${createCountdownElement("2025-12-29T00:00:00", "Time until Wedding")}
+                        ${createCountdownElement("2025-10-31T00:00:00", "Time until Josh's Wedding")}
+                    </div>
+                    <div class="rounded-xl shadow-md p-6 card">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-xl font-semibold flex items-center text-purple-300">
+                                <i class="fas fa-bullseye mr-2"></i> Daily Macro Goals
+                            </h3>
+                            <button class="text-gray-400 hover:text-white transition duration-300" onclick="showView('macros')">
+                                <i class="fas fa-edit"></i>
+                            </button>
+                        </div>
+                        <div class="grid grid-cols-3 gap-4">
+                            <div class="p-4 rounded-xl bg-gray-800 text-center">
+                                <i class="fas fa-drumstick-bite text-purple-400 icon-small mb-2"></i>
+                                <p class="text-xs text-gray-400">Protein</p>
+                                <p class="text-lg font-bold">${macroGoals.protein}g</p>
+                            </div>
+                            <div class="p-4 rounded-xl bg-gray-800 text-center">
+                                <i class="fas fa-bread-slice text-purple-400 icon-small mb-2"></i>
+                                <p class="text-xs text-gray-400">Carbs</p>
+                                <p class="text-lg font-bold">${macroGoals.carbs}g</p>
+                            </div>
+                            <div class="p-4 rounded-xl bg-gray-800 text-center">
+                                <i class="fas fa-cheese text-purple-400 icon-small mb-2"></i>
+                                <p class="text-xs text-gray-400">Fat</p>
+                                <p class="text-lg font-bold">${macroGoals.fat}g</p>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             `;
-            
-            const updateCountdown = () => {
-                const time = calculateCountdown(targetDate);
-                const countdownEl = container.querySelector(`#${safeId}`);
-                if (countdownEl) {
-                     countdownEl.innerHTML = `
+        }
+
+        function createCountdownElement(targetDate, title) {
+            const time = calculateCountdown(targetDate);
+            return `
+                <div class="flex-1 p-6 rounded-xl shadow-md text-center card">
+                    <h3 class="text-xl font-bold mb-2 text-purple-300 flex items-center justify-center">
+                        <i class="fas fa-calendar-alt mr-2"></i> ${title}
+                    </h3>
+                    <div class="flex justify-center space-x-4 text-gray-200">
                         <div class="flex flex-col items-center">
                             <span class="text-4xl font-bold">${time.days}</span>
                             <span class="text-sm text-gray-400">Days</span>
@@ -303,535 +412,342 @@
                             <span class="text-4xl font-bold">${time.seconds}</span>
                             <span class="text-sm text-gray-400">Seconds</span>
                         </div>
-                    `;
-                }
-            };
-
-            updateCountdown();
-            setInterval(updateCountdown, 1000);
-            return container;
-        }
-
-        function renderDashboard() {
-            const content = document.createElement('div');
-            content.className = "space-y-6 max-w-4xl mx-auto";
-
-            const titleSection = document.createElement('div');
-            titleSection.className = "text-center";
-            titleSection.innerHTML = `
-                <h2 class="text-4xl font-bold text-purple-400">Countdown & Gains</h2>
-                <p class="text-gray-400 mt-1">Your personal dashboard for wedding prep and fitness goals.</p>
-            `;
-            content.appendChild(titleSection);
-
-            const countdownsContainer = document.createElement('div');
-            countdownsContainer.className = "flex space-x-4";
-            countdownsContainer.appendChild(createCountdownElement("2025-12-29T00:00:00", "Time until Wedding"));
-            countdownsContainer.appendChild(createCountdownElement("2025-10-31T00:00:00", "Time until Josh's Wedding"));
-            content.appendChild(countdownsContainer);
-
-            const macroGoalsCard = document.createElement('div');
-            macroGoalsCard.className = "rounded-xl shadow-md p-6 card";
-            macroGoalsCard.innerHTML = `
-                <div class="flex justify-between items-center mb-4">
-                    <h3 class="text-xl font-semibold flex items-center text-purple-300">
-                        <i class="fas fa-bullseye mr-2"></i> Daily Macro Goals
-                    </h3>
-                    <button class="text-gray-400 hover:text-white transition duration-300">
-                        <i class="fas fa-edit"></i>
-                    </button>
-                </div>
-                <div class="grid grid-cols-3 gap-4">
-                    <div class="p-4 rounded-xl bg-gray-800 text-center">
-                        <i class="fas fa-drumstick-bite text-purple-400 icon-small mb-2"></i>
-                        <p class="text-xs text-gray-400">Protein</p>
-                        <p class="text-lg font-bold">${macroGoals.protein}g</p>
-                    </div>
-                    <div class="p-4 rounded-xl bg-gray-800 text-center">
-                        <i class="fas fa-bread-slice text-purple-400 icon-small mb-2"></i>
-                        <p class="text-xs text-gray-400">Carbs</p>
-                        <p class="text-lg font-bold">${macroGoals.carbs}g</p>
-                    </div>
-                    <div class="p-4 rounded-xl bg-gray-800 text-center">
-                        <i class="fas fa-cheese text-purple-400 icon-small mb-2"></i>
-                        <p class="text-xs text-gray-400">Fat</p>
-                        <p class="text-lg font-bold">${macroGoals.fat}g</p>
                     </div>
                 </div>
             `;
-            content.appendChild(macroGoalsCard);
-            
-            return content;
         }
 
         function renderMacros() {
-            const content = document.createElement('div');
-            content.className = "space-y-6 text-gray-200 max-w-4xl mx-auto";
             const messageEl = message ? `<div class="p-3 bg-purple-900 text-purple-200 rounded-lg text-sm text-center card">${message}</div>` : '';
+            const mealsListHtml = meals.map(meal => `
+                <li class="flex justify-between items-center bg-gray-800 p-2 rounded-md">
+                    <span>${meal.name}</span><span class="text-xs text-gray-400">P:${meal.protein} C:${meal.carbs} F:${meal.fat}</span>
+                </li>
+            `).join('');
             
-            content.innerHTML = `
-                <div class="flex justify-between items-center mb-4">
-                    <h2 class="text-2xl font-bold text-purple-400">Daily Macro Tracker</h2>
-                    <button class="text-gray-400 hover:text-white transition duration-300">
-                        <i class="fas fa-edit"></i>
-                    </button>
-                </div>
-                ${messageEl}
-                <div class="rounded-xl shadow-md p-6 card">
-                    <h3 class="text-lg font-semibold flex items-center text-purple-300 mb-4">
-                        <i class="fas fa-utensils mr-2"></i> Today's Meal Tracker
-                    </h3>
-                    <div class="grid grid-cols-3 gap-4 mb-4">
-                        <div class="p-4 rounded-xl bg-gray-800">
-                            <div class="flex items-center mb-2">
-                                <i class="fas fa-drumstick-bite text-purple-400 mr-2"></i>
-                                <span class="font-semibold">Protein</span>
-                            </div>
-                            <div class="w-full bg-gray-700 rounded-full h-2.5">
-                                <div class="bg-purple-500 h-2.5 rounded-full" style="width: ${Math.min(100, (dailyMacros.protein / macroGoals.protein) * 100)}%;"></div>
-                            </div>
-                            <p class="text-xs text-right mt-1">${dailyMacros.protein} / ${macroGoals.protein}g</p>
-                        </div>
-                        <div class="p-4 rounded-xl bg-gray-800">
-                            <div class="flex items-center mb-2">
-                                <i class="fas fa-bread-slice text-purple-400 mr-2"></i>
-                                <span class="font-semibold">Carbs</span>
-                            </div>
-                            <div class="w-full bg-gray-700 rounded-full h-2.5">
-                                <div class="bg-purple-500 h-2.5 rounded-full" style="width: ${Math.min(100, (dailyMacros.carbs / macroGoals.carbs) * 100)}%;"></div>
-                            </div>
-                            <p class="text-xs text-right mt-1">${dailyMacros.carbs} / ${macroGoals.carbs}g</p>
-                        </div>
-                        <div class="p-4 rounded-xl bg-gray-800">
-                            <div class="flex items-center mb-2">
-                                <i class="fas fa-cheese text-purple-400 mr-2"></i>
-                                <span class="font-semibold">Fat</span>
-                            </div>
-                            <div class="w-full bg-gray-700 rounded-full h-2.5">
-                                <div class="bg-purple-500 h-2.5 rounded-full" style="width: ${Math.min(100, (dailyMacros.fat / macroGoals.fat) * 100)}%;"></div>
-                            </div>
-                            <p class="text-xs text-right mt-1">${dailyMacros.fat} / ${macroGoals.fat}g</p>
-                        </div>
+            return `
+                <div class="space-y-6 text-gray-200 max-w-4xl mx-auto">
+                    <div class="flex justify-between items-center mb-4">
+                        <h2 class="text-2xl font-bold text-purple-400">Daily Macro Tracker</h2>
+                        <button class="text-gray-400 hover:text-white transition duration-300" onclick="showView('dashboard')">
+                            <i class="fas fa-times"></i>
+                        </button>
                     </div>
-
-                    <div class="rounded-xl p-4 bg-gray-800">
-                        <h4 class="font-semibold text-gray-300 flex items-center mb-2">
-                            <i class="fas fa-plus-circle text-purple-400 mr-2"></i> Add a Meal
-                        </h4>
-                        <form id="addMealForm" class="flex flex-col space-y-2">
-                            <input name="mealName" type="text" placeholder="Meal Name (e.g., Chicken Salad)" class="w-full border border-gray-700 bg-gray-900 rounded-md p-2 text-gray-200" />
-                            <div class="grid grid-cols-3 gap-2">
-                                <input name="protein" type="number" placeholder="Protein (g)" class="w-full border border-gray-700 bg-gray-900 rounded-md p-2 text-gray-200" />
-                                <input name="carbs" type="number" placeholder="Carbs (g)" class="w-full border border-gray-700 bg-gray-900 rounded-md p-2 text-gray-200" />
-                                <input name="fat" type="number" placeholder="Fat (g)" class="w-full border border-gray-700 bg-gray-900 rounded-md p-2 text-gray-200" />
+                    ${messageEl}
+                    <div class="rounded-xl shadow-md p-6 card">
+                        <h3 class="text-lg font-semibold flex items-center text-purple-300 mb-4">
+                            <i class="fas fa-utensils mr-2"></i> Today's Meal Tracker
+                        </h3>
+                        <div class="grid grid-cols-3 gap-4 mb-4">
+                            <div class="p-4 rounded-xl bg-gray-800">
+                                <div class="flex items-center mb-2">
+                                    <i class="fas fa-drumstick-bite text-purple-400 mr-2"></i>
+                                    <span class="font-semibold">Protein</span>
+                                </div>
+                                <div class="w-full bg-gray-700 rounded-full h-2.5">
+                                    <div class="bg-purple-500 h-2.5 rounded-full" style="width: ${Math.min(100, (dailyMacros.protein / macroGoals.protein) * 100)}%;"></div>
+                                </div>
+                                <p class="text-xs text-right mt-1">${dailyMacros.protein} / ${macroGoals.protein}g</p>
                             </div>
-                            <button type="submit" class="w-full bg-purple-600 text-white rounded-md py-2 hover:bg-purple-700 transition duration-300">Log Meal</button>
-                        </form>
-                    </div>
-
-                    <div class="mt-4">
-                        <h4 class="font-semibold text-gray-300">Logged Meals:</h4>
-                        <ul id="mealsList" class="text-sm mt-2 space-y-1"></ul>
+                            <div class="p-4 rounded-xl bg-gray-800">
+                                <div class="flex items-center mb-2">
+                                    <i class="fas fa-bread-slice text-purple-400 mr-2"></i>
+                                    <span class="font-semibold">Carbs</span>
+                                </div>
+                                <div class="w-full bg-gray-700 rounded-full h-2.5">
+                                    <div class="bg-purple-500 h-2.5 rounded-full" style="width: ${Math.min(100, (dailyMacros.carbs / macroGoals.carbs) * 100)}%;"></div>
+                                </div>
+                                <p class="text-xs text-right mt-1">${dailyMacros.carbs} / ${macroGoals.carbs}g</p>
+                            </div>
+                            <div class="p-4 rounded-xl bg-gray-800">
+                                <div class="flex items-center mb-2">
+                                    <i class="fas fa-cheese text-purple-400 mr-2"></i>
+                                    <span class="font-semibold">Fat</span>
+                                </div>
+                                <div class="w-full bg-gray-700 rounded-full h-2.5">
+                                    <div class="bg-purple-500 h-2.5 rounded-full" style="width: ${Math.min(100, (dailyMacros.fat / macroGoals.fat) * 100)}%;"></div>
+                                </div>
+                                <p class="text-xs text-right mt-1">${dailyMacros.fat} / ${macroGoals.fat}g</p>
+                            </div>
+                        </div>
+                        <div class="rounded-xl p-4 bg-gray-800 mb-4">
+                            <h4 class="font-semibold text-gray-300 flex items-center mb-2">
+                                <i class="fas fa-plus-circle text-purple-400 mr-2"></i> Add a Meal
+                            </h4>
+                            <form id="addMealForm" class="flex flex-col space-y-2">
+                                <input name="mealName" type="text" placeholder="Meal Name (e.g., Chicken Salad)" class="w-full border border-gray-700 bg-gray-900 rounded-md p-2 text-gray-200" />
+                                <div class="grid grid-cols-3 gap-2">
+                                    <input name="protein" type="number" placeholder="Protein (g)" class="w-full border border-gray-700 bg-gray-900 rounded-md p-2 text-gray-200" />
+                                    <input name="carbs" type="number" placeholder="Carbs (g)" class="w-full border border-gray-700 bg-gray-900 rounded-md p-2 text-gray-200" />
+                                    <input name="fat" type="number" placeholder="Fat (g)" class="w-full border border-gray-700 bg-gray-900 rounded-md p-2 text-gray-200" />
+                                </div>
+                                <button type="submit" class="w-full bg-purple-600 text-white rounded-md py-2 hover:bg-purple-700 transition duration-300">Log Meal</button>
+                            </form>
+                        </div>
+                        <div class="rounded-xl p-4 bg-gray-800">
+                            <h4 class="font-semibold text-gray-300 flex items-center mb-2">
+                                <i class="fas fa-list-alt mr-2"></i> Logged Meals
+                            </h4>
+                            <ul id="mealsList" class="text-sm mt-2 space-y-1">
+                                ${mealsListHtml || '<li class="text-center text-gray-400">No meals logged today.</li>'}
+                            </ul>
+                        </div>
                     </div>
                 </div>
             `;
-            // Add event listeners after the elements are in the DOM
-            setTimeout(() => {
-                const addMealForm = document.getElementById('addMealForm');
-                if (addMealForm) addMealForm.addEventListener('submit', handleAddMeal);
-                const mealsList = document.getElementById('mealsList');
-                meals.forEach(meal => {
-                    const li = document.createElement('li');
-                    li.className = "flex justify-between items-center bg-gray-800 p-2 rounded-md";
-                    li.innerHTML = `<span>${meal.name}</span><span class="text-xs text-gray-400">P:${meal.protein} C:${meal.carbs} F:${meal.fat}</span>`;
-                    mealsList.appendChild(li);
-                });
-            }, 0);
-            
-            return content;
         }
 
         function renderWeights() {
-            const content = document.createElement('div');
-            content.className = "space-y-6 text-gray-200 max-w-4xl mx-auto";
             const messageEl = message ? `<div class="p-3 bg-purple-900 text-purple-200 rounded-lg text-sm text-center card">${message}</div>` : '';
-            content.innerHTML = `
-                <div class="flex justify-between items-center mb-4">
-                    <h2 class="text-2xl font-bold flex items-center text-purple-400">
-                        <i class="fas fa-weight-hanging mr-2"></i> Weight Tracker
-                    </h2>
-                    <button class="text-gray-400 hover:text-white transition duration-300">
-                        <i class="fas fa-edit"></i>
-                    </button>
-                </div>
-                ${messageEl}
-                <div class="flex space-x-4">
-                    <div class="flex-1 rounded-xl shadow-md p-6 card">
-                        <h3 class="text-lg font-semibold flex items-center text-purple-300 mb-4">
-                            <i class="fas fa-plus-circle mr-2"></i> Log New Weight
-                        </h3>
-                        <form id="addWeightForm" class="flex flex-col space-y-2">
-                            <input name="date" type="date" class="w-full border border-gray-700 bg-gray-900 rounded-md p-2 text-gray-200" />
-                            <div class="flex space-x-2 items-center">
-                                <input name="weight" type="number" placeholder="Weight (lbs)" class="flex-1 border border-gray-700 bg-gray-900 rounded-md p-2 text-gray-200" />
-                                <button type="submit" class="bg-purple-600 text-white rounded-md p-2 hover:bg-purple-700 transition duration-300">
-                                    <i class="fas fa-plus"></i> Add
-                                </button>
-                            </div>
-                        </form>
+            const weightLogTableHtml = weightLog.map(log => `
+                <tr>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-300">${log.date}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-300">${log.weight}</td>
+                </tr>
+            `).join('');
+            
+            return `
+                <div class="space-y-6 text-gray-200 max-w-4xl mx-auto">
+                    <div class="flex justify-between items-center mb-4">
+                        <h2 class="text-2xl font-bold flex items-center text-purple-400">
+                            <i class="fas fa-weight-hanging mr-2"></i> Weight Tracker
+                        </h2>
+                        <button class="text-gray-400 hover:text-white transition duration-300" onclick="showView('dashboard')">
+                            <i class="fas fa-times"></i>
+                        </button>
                     </div>
-                    <div class="flex-1 rounded-xl shadow-md p-6 card">
+                    ${messageEl}
+                    <div class="flex space-x-4">
+                        <div class="flex-1 rounded-xl shadow-md p-6 card">
+                            <h3 class="text-lg font-semibold flex items-center text-purple-300 mb-4">
+                                <i class="fas fa-plus-circle mr-2"></i> Log New Weight
+                            </h3>
+                            <form id="addWeightForm" class="flex flex-col space-y-2">
+                                <input name="date" type="date" class="w-full border border-gray-700 bg-gray-900 rounded-md p-2 text-gray-200" />
+                                <div class="flex space-x-2 items-center">
+                                    <input name="weight" type="number" step="0.1" placeholder="Weight (lbs)" class="flex-1 border border-gray-700 bg-gray-900 rounded-md p-2 text-gray-200" />
+                                    <button type="submit" class="bg-purple-600 text-white rounded-md p-2 hover:bg-purple-700 transition duration-300">
+                                        <i class="fas fa-plus"></i> Add
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                        <div class="flex-1 rounded-xl shadow-md p-6 card">
+                            <h3 class="text-lg font-semibold flex items-center text-purple-300 mb-4">
+                                <i class="fas fa-chart-line mr-2"></i> Progress Chart
+                            </h3>
+                            <div class="h-64 mb-4">
+                                <canvas id="weightChart"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="rounded-xl shadow-md p-6 card">
                         <h3 class="text-lg font-semibold flex items-center text-purple-300 mb-4">
-                            <i class="fas fa-chart-line mr-2"></i> Progress Chart
+                            <i class="fas fa-list-alt mr-2"></i> Weight Log
                         </h3>
-                        <div class="h-64 mb-4">
-                            <canvas id="weightChart"></canvas>
+                        <div class="overflow-x-auto">
+                            <table class="min-w-full divide-y divide-gray-700">
+                                <thead>
+                                    <tr>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Date</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Weight (lbs)</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="bg-gray-800 divide-y divide-gray-700">
+                                    ${weightLogTableHtml || '<tr><td colspan="2" class="px-6 py-4 text-center text-gray-400">No weight logged yet.</td></tr>'}
+                                </tbody>
+                            </table>
                         </div>
                     </div>
                 </div>
-                <div class="rounded-xl shadow-md p-6 card">
-                    <h3 class="text-lg font-semibold flex items-center text-purple-300 mb-4">
-                        <i class="fas fa-list-alt mr-2"></i> Weight Log
-                    </h3>
-                    <div class="overflow-x-auto">
-                        <table class="min-w-full divide-y divide-gray-700">
-                            <thead>
-                                <tr>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Date</th>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Weight (lbs)</th>
-                                </tr>
-                            </thead>
-                            <tbody id="weightLogTable" class="bg-gray-800 divide-y divide-gray-700"></tbody>
-                        </table>
-                    </div>
-                </div>
             `;
-            setTimeout(() => {
-                const addWeightForm = document.getElementById('addWeightForm');
-                if (addWeightForm) addWeightForm.addEventListener('submit', handleAddWeight);
-
-                const weightLogTable = document.getElementById('weightLogTable');
-                if (weightLog.length > 0) {
-                    const sortedLog = [...weightLog].sort((a,b) => new Date(a.date) - new Date(b.date));
-                    const labels = sortedLog.map(log => log.date);
-                    const data = sortedLog.map(log => log.weight);
-                    createLineChart('weightChart', data, labels, 'Weight (lbs)', 'Weight');
-                    weightLogTable.innerHTML = sortedLog.map(log => `
-                        <tr>
-                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-300">${log.date}</td>
-                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-300">${log.weight}</td>
-                        </tr>
-                    `).join('');
-                } else {
-                    const ctx = document.getElementById('weightChart');
-                    if(ctx) {
-                        ctx.outerHTML = `<div class="text-center text-gray-400 p-4">Log at least two entries to see a chart.</div>`;
-                    }
-                    weightLogTable.innerHTML = `<tr><td colspan="2" class="px-6 py-4 text-center text-gray-400">No weight logged yet.</td></tr>`;
-                }
-            }, 0);
-            return content;
         }
 
         function renderMeasurements() {
-            const content = document.createElement('div');
-            content.className = "space-y-6 text-gray-200 max-w-4xl mx-auto";
             const messageEl = message ? `<div class="p-3 bg-purple-900 text-purple-200 rounded-lg text-sm text-center card">${message}</div>` : '';
-            content.innerHTML = `
-                <div class="flex justify-between items-center mb-4">
-                    <h2 class="text-2xl font-bold flex items-center text-purple-400">
-                        <i class="fas fa-ruler-horizontal mr-2"></i> Measurements Tracker
-                    </h2>
-                    <button class="text-gray-400 hover:text-white transition duration-300">
-                        <i class="fas fa-edit"></i>
-                    </button>
-                </div>
-                ${messageEl}
-                 <div class="flex space-x-4">
-                    <div class="flex-1 rounded-xl shadow-md p-6 card">
-                        <h3 class="text-lg font-semibold flex items-center text-purple-300 mb-4">
-                            <i class="fas fa-plus-circle mr-2"></i> Log New Measurements
-                        </h3>
-                        <form id="addMeasurementsForm" class="flex flex-col space-y-2">
-                            <input name="date" type="date" class="w-full border border-gray-700 bg-gray-900 rounded-md p-2 text-gray-200" />
-                            <div class="flex flex-col space-y-2">
-                                <input name="chest" type="number" placeholder="Chest (in)" class="w-full border border-gray-700 bg-gray-900 rounded-md p-2 text-gray-200" />
-                                <input name="waist" type="number" placeholder="Waist (in)" class="w-full border border-gray-700 bg-gray-900 rounded-md p-2 text-gray-200" />
-                                <input name="thigh" type="number" placeholder="Thigh (in)" class="w-full border border-gray-700 bg-gray-900 rounded-md p-2 text-gray-200" />
-                            </div>
-                            <button type="submit" class="w-full bg-purple-600 text-white rounded-md py-2 hover:bg-purple-700 transition duration-300">Add Measurement</button>
-                        </form>
+            const measurementsLogTableHtml = measurementsLog.map(log => `
+                <tr>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-300">${log.date}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-300">${log.chest}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-300">${log.waist}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-300">${log.thigh}</td>
+                </tr>
+            `).join('');
+
+            return `
+                <div class="space-y-6 text-gray-200 max-w-4xl mx-auto">
+                    <div class="flex justify-between items-center mb-4">
+                        <h2 class="text-2xl font-bold flex items-center text-purple-400">
+                            <i class="fas fa-ruler-horizontal mr-2"></i> Measurements Tracker
+                        </h2>
+                        <button class="text-gray-400 hover:text-white transition duration-300" onclick="showView('dashboard')">
+                            <i class="fas fa-times"></i>
+                        </button>
                     </div>
-                    <div class="flex-1 rounded-xl shadow-md p-6 card">
+                    ${messageEl}
+                    <div class="flex space-x-4">
+                        <div class="flex-1 rounded-xl shadow-md p-6 card">
+                            <h3 class="text-lg font-semibold flex items-center text-purple-300 mb-4">
+                                <i class="fas fa-plus-circle mr-2"></i> Log New Measurements
+                            </h3>
+                            <form id="addMeasurementsForm" class="flex flex-col space-y-2">
+                                <input name="date" type="date" class="w-full border border-gray-700 bg-gray-900 rounded-md p-2 text-gray-200" />
+                                <div class="flex flex-col space-y-2">
+                                    <input name="chest" type="number" step="0.1" placeholder="Chest (in)" class="w-full border border-gray-700 bg-gray-900 rounded-md p-2 text-gray-200" />
+                                    <input name="waist" type="number" step="0.1" placeholder="Waist (in)" class="w-full border border-gray-700 bg-gray-900 rounded-md p-2 text-gray-200" />
+                                    <input name="thigh" type="number" step="0.1" placeholder="Thigh (in)" class="w-full border border-gray-700 bg-gray-900 rounded-md p-2 text-gray-200" />
+                                </div>
+                                <button type="submit" class="w-full bg-purple-600 text-white rounded-md py-2 hover:bg-purple-700 transition duration-300">Add Measurement</button>
+                            </form>
+                        </div>
+                        <div class="flex-1 rounded-xl shadow-md p-6 card">
+                            <h3 class="text-lg font-semibold flex items-center text-purple-300 mb-4">
+                                <i class="fas fa-chart-line mr-2"></i> Progress Chart
+                            </h3>
+                            <div class="h-64 mb-4">
+                                <canvas id="measurementsChart"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="rounded-xl shadow-md p-6 card">
                         <h3 class="text-lg font-semibold flex items-center text-purple-300 mb-4">
-                            <i class="fas fa-chart-line mr-2"></i> Progress Chart
+                            <i class="fas fa-list-alt mr-2"></i> Measurement Log
                         </h3>
-                        <div class="h-64 mb-4">
-                            <canvas id="measurementsChart"></canvas>
+                        <div class="overflow-x-auto">
+                            <table class="min-w-full divide-y divide-gray-700">
+                                <thead>
+                                    <tr>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Date</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Chest (in)</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Waist (in)</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Thigh (in)</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="bg-gray-800 divide-y divide-gray-700">
+                                    ${measurementsLogTableHtml || '<tr><td colspan="4" class="px-6 py-4 text-center text-gray-400">No measurements logged yet.</td></tr>'}
+                                </tbody>
+                            </table>
                         </div>
                     </div>
                 </div>
-                <div class="rounded-xl shadow-md p-6 card">
-                    <h3 class="text-lg font-semibold flex items-center text-purple-300 mb-4">
-                        <i class="fas fa-list-alt mr-2"></i> Measurement Log
-                    </h3>
-                    <div class="overflow-x-auto">
-                        <table class="min-w-full divide-y divide-gray-700">
-                            <thead>
-                                <tr>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Date</th>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Chest (in)</th>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Waist (in)</th>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Thigh (in)</th>
-                                </tr>
-                            </thead>
-                            <tbody id="measurementsLogTable" class="bg-gray-800 divide-y divide-gray-700"></tbody>
-                        </table>
-                    </div>
-                </div>
             `;
-            setTimeout(() => {
-                const addMeasurementsForm = document.getElementById('addMeasurementsForm');
-                if (addMeasurementsForm) addMeasurementsForm.addEventListener('submit', handleAddMeasurements);
-
-                const measurementsLogTable = document.getElementById('measurementsLogTable');
-                if (measurementsLog.length > 0) {
-                    const sortedLog = [...measurementsLog].sort((a,b) => new Date(a.date) - new Date(b.date));
-                    const labels = sortedLog.map(log => log.date);
-                    
-                    const datasets = [
-                        {
-                            label: 'Chest (in)',
-                            data: sortedLog.map(log => log.chest),
-                            borderColor: '#8b5cf6', // Purple
-                            backgroundColor: 'rgba(139, 92, 246, 0.2)',
-                            tension: 0.4,
-                            fill: false,
-                            pointBackgroundColor: '#8b5cf6',
-                            pointBorderColor: '#fff'
-                        },
-                        {
-                            label: 'Waist (in)',
-                            data: sortedLog.map(log => log.waist),
-                            borderColor: '#a855f7', // A lighter purple
-                            backgroundColor: 'rgba(168, 85, 247, 0.2)',
-                            tension: 0.4,
-                            fill: false,
-                            pointBackgroundColor: '#a855f7',
-                            pointBorderColor: '#fff'
-                        },
-                        {
-                            label: 'Thigh (in)',
-                            data: sortedLog.map(log => log.thigh),
-                            borderColor: '#e879f9', // A pink-purple accent
-                            backgroundColor: 'rgba(232, 121, 249, 0.2)',
-                            tension: 0.4,
-                            fill: false,
-                            pointBackgroundColor: '#e879f9',
-                            pointBorderColor: '#fff'
-                        }
-                    ];
-                    
-                    const ctx = document.getElementById('measurementsChart');
-                    if (ctx) {
-                         const existingChart = Chart.getChart(ctx);
-                        if (existingChart) {
-                            existingChart.destroy();
-                        }
-
-                        new Chart(ctx, {
-                            type: 'line',
-                            data: {
-                                labels: labels,
-                                datasets: datasets
-                            },
-                            options: {
-                                responsive: true,
-                                maintainAspectRatio: false,
-                                plugins: {
-                                    legend: {
-                                        labels: {
-                                            color: '#e5e7eb'
-                                        }
-                                    }
-                                },
-                                scales: {
-                                    y: {
-                                        beginAtZero: false,
-                                        title: {
-                                            display: true,
-                                            text: 'Measurement (in)',
-                                            color: '#e5e7eb'
-                                        },
-                                        ticks: {
-                                            color: '#e5e7eb'
-                                        },
-                                        grid: {
-                                            color: '#3f3f46'
-                                        }
-                                    },
-                                    x: {
-                                        ticks: {
-                                            color: '#e5e7eb'
-                                        },
-                                        grid: {
-                                            color: '#3f3f46'
-                                        }
-                                    }
-                                }
-                            }
-                        });
-                    }
-                    measurementsLogTable.innerHTML = sortedLog.map(log => `
-                        <tr>
-                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-300">${log.date}</td>
-                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-300">${log.chest}</td>
-                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-300">${log.waist}</td>
-                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-300">${log.thigh}</td>
-                        </tr>
-                    `).join('');
-                } else {
-                    const ctx = document.getElementById('measurementsChart');
-                    if(ctx) {
-                        ctx.outerHTML = `<div class="text-center text-gray-400 p-4">Log at least two entries to see a chart.</div>`;
-                    }
-                    measurementsLogTable.innerHTML = `<tr><td colspan="4" class="px-6 py-4 text-center text-gray-400">No measurements logged yet.</td></tr>`;
-                }
-            }, 0);
-            return content;
         }
 
-        // Main rendering function
+        function createNavigation() {
+            return `
+                <div class="bg-gray-900 border-r border-gray-800 p-4 w-64 flex flex-col items-center">
+                    <img src="https://www.gstatic.com/images/branding/product/2x/firebase_lockup_48dp.png" alt="Firebase Logo" class="w-24 mb-6">
+                    <nav class="flex-1 w-full space-y-2">
+                        <button onclick="showView('dashboard')" class="flex items-center w-full px-4 py-2 rounded-md text-gray-300 hover:bg-gray-800 transition duration-300 ${view === 'dashboard' ? 'bg-purple-600 text-white' : ''}">
+                            <i class="fas fa-home mr-3"></i> Dashboard
+                        </button>
+                        <button onclick="showView('macros')" class="flex items-center w-full px-4 py-2 rounded-md text-gray-300 hover:bg-gray-800 transition duration-300 ${view === 'macros' ? 'bg-purple-600 text-white' : ''}">
+                            <i class="fas fa-utensils mr-3"></i> Macros
+                        </button>
+                        <button onclick="showView('weights')" class="flex items-center w-full px-4 py-2 rounded-md text-gray-300 hover:bg-gray-800 transition duration-300 ${view === 'weights' ? 'bg-purple-600 text-white' : ''}">
+                            <i class="fas fa-weight-hanging mr-3"></i> Weights
+                        </button>
+                        <button onclick="showView('measurements')" class="flex items-center w-full px-4 py-2 rounded-md text-gray-300 hover:bg-gray-800 transition duration-300 ${view === 'measurements' ? 'bg-purple-600 text-white' : ''}">
+                            <i class="fas fa-ruler-horizontal mr-3"></i> Measurements
+                        </button>
+                    </nav>
+                </div>
+            `;
+        }
+
+        // The main render function
         function renderApp() {
-            root.innerHTML = '';
-            
-            if (!isAuthReady) {
-                const loadingContainer = document.createElement('div');
-                loadingContainer.className = "flex items-center justify-center min-h-screen w-full";
-                loadingContainer.innerHTML = `<div class="loading-animation"></div>`;
-                root.appendChild(loadingContainer);
+            if (!user || !Object.values(dataLoaded).every(status => status)) {
+                // Show loading state
+                root.innerHTML = `
+                    <div id="loading" class="flex flex-col items-center text-purple-300">
+                        <div class="loading-animation mb-4"></div>
+                        <p>Loading your data...</p>
+                    </div>
+                `;
                 return;
             }
 
-            const appContainer = document.createElement('div');
-            appContainer.className = "min-h-screen flex flex-grow";
-
-            const navBar = document.createElement('nav');
-            navBar.className = "w-64 bg-gray-900 text-gray-200 flex-shrink-0 p-6 flex flex-col";
-            navBar.innerHTML = `
-                <div class="flex items-center mb-6">
-                    <i class="fas fa-dumbbell h-10 w-10 text-purple-300 text-2xl"></i>
-                    <h1 class="text-2xl font-bold ml-2">FitSync</h1>
-                </div>
-                <div class="flex flex-col items-center mb-6">
-                    <div class="w-20 h-20 rounded-full bg-purple-600 flex items-center justify-center text-3xl font-bold text-white">GB</div>
-                    <h2 class="mt-2 text-lg font-semibold">Giann Berrospi</h2>
-                    <p class="text-xs text-gray-400 truncate w-full text-center mt-1">${user?.uid || 'Loading...'}</p>
-                </div>
-                <ul class="flex-grow space-y-2">
-                    <li><button id="btn-dashboard" class="flex items-center w-full p-3 rounded-lg font-semibold transition-colors duration-300 ${view === 'dashboard' ? 'bg-purple-500 text-white' : 'text-gray-400 hover:bg-gray-800'}">
-                        <i class="fas fa-tachometer-alt mr-3 w-5"></i> Dashboard</button></li>
-                    <li><button id="btn-macros" class="flex items-center w-full p-3 rounded-lg font-semibold transition-colors duration-300 ${view === 'macros' ? 'bg-purple-500 text-white' : 'text-gray-400 hover:bg-gray-800'}">
-                        <i class="fas fa-utensils mr-3 w-5"></i> Macros</button></li>
-                    <li><button id="btn-weights" class="flex items-center w-full p-3 rounded-lg font-semibold transition-colors duration-300 ${view === 'weights' ? 'bg-purple-500 text-white' : 'text-gray-400 hover:bg-gray-800'}">
-                        <i class="fas fa-weight-hanging mr-3 w-5"></i> Weights</button></li>
-                    <li><button id="btn-measurements" class="flex items-center w-full p-3 rounded-lg font-semibold transition-colors duration-300 ${view === 'measurements' ? 'bg-purple-500 text-white' : 'text-gray-400 hover:bg-gray-800'}">
-                        <i class="fas fa-ruler-horizontal mr-3 w-5"></i> Measurements</button></li>
-                </ul>
-            `;
-
-            const mainContent = document.createElement('main');
-            mainContent.className = "flex-1 overflow-auto p-8";
-
-            appContainer.appendChild(navBar);
-            appContainer.appendChild(mainContent);
-            root.appendChild(appContainer);
-
-            document.getElementById('btn-dashboard').addEventListener('click', () => { view = 'dashboard'; renderApp(); });
-            document.getElementById('btn-macros').addEventListener('click', () => { view = 'macros'; renderApp(); });
-            document.getElementById('btn-weights').addEventListener('click', () => { view = 'weights'; renderApp(); });
-            document.getElementById('btn-measurements').addEventListener('click', () => { view = 'measurements'; renderApp(); });
-            
-            mainContent.innerHTML = '';
-            switch (view) {
-                case 'dashboard': mainContent.appendChild(renderDashboard()); break;
-                case 'macros': mainContent.appendChild(renderMacros()); break;
-                case 'weights': mainContent.appendChild(renderWeights()); break;
-                case 'measurements': mainContent.appendChild(renderMeasurements()); break;
+            let contentHtml;
+            switch(view) {
+                case 'dashboard':
+                    contentHtml = renderDashboard();
+                    break;
+                case 'macros':
+                    contentHtml = renderMacros();
+                    break;
+                case 'weights':
+                    contentHtml = renderWeights();
+                    break;
+                case 'measurements':
+                    contentHtml = renderMeasurements();
+                    break;
+                default:
+                    contentHtml = renderDashboard();
             }
+
+            const navHtml = createNavigation();
+            root.innerHTML = navHtml + `
+                <main class="flex-1 p-6 overflow-y-auto">
+                    ${contentHtml}
+                </main>
+            `;
+            
+            // Re-bind event listeners and render charts after the DOM is updated
+            bindEventsAndRenderCharts();
         }
 
-        // --- Main Execution Logic ---
-        renderApp();
-        
-        onAuthStateChanged(auth, async (currentUser) => {
-            if (currentUser) {
-                user = currentUser;
-            } else {
-                try {
-                    // Correctly check if the token is available and use the appropriate sign-in method.
-                    if (initialAuthToken) {
-                        await signInWithCustomToken(auth, initialAuthToken);
-                    } else {
-                        await signInAnonymously(auth);
-                    }
-                    user = auth.currentUser;
-                } catch (error) {
-                    console.error("Authentication error:", error);
+        function bindEventsAndRenderCharts() {
+            if (view === 'macros') {
+                const addMealForm = document.getElementById('addMealForm');
+                if (addMealForm) addMealForm.addEventListener('submit', handleAddMeal);
+            }
+            if (view === 'weights') {
+                const addWeightForm = document.getElementById('addWeightForm');
+                if (addWeightForm) addWeightForm.addEventListener('submit', handleAddWeight);
+                
+                if (weightLog.length > 1) {
+                    const sortedLog = [...weightLog].sort((a, b) => new Date(a.date) - new Date(b.date));
+                    const labels = sortedLog.map(log => log.date);
+                    const datasets = [{ label: 'Weight (lbs)', data: sortedLog.map(log => log.weight) }];
+                    createLineChart('weightChart', datasets, labels);
+                } else {
+                    const chartContainer = document.getElementById('weightChart').parentElement;
+                    chartContainer.innerHTML = `<div class="text-center text-gray-400 p-4">Log at least two entries to see a chart.</div>`;
                 }
             }
-            
-            if (user) {
-                isAuthReady = true;
-                renderApp();
-                
-                const userId = user.uid;
+            if (view === 'measurements') {
+                const addMeasurementsForm = document.getElementById('addMeasurementsForm');
+                if (addMeasurementsForm) addMeasurementsForm.addEventListener('submit', handleAddMeasurements);
 
-                // Set up real-time listeners for all data
-                const userDocRef = doc(db, `/artifacts/${appId}/users/${userId}`);
-                onSnapshot(userDocRef, (docSnap) => {
-                    if (docSnap.exists() && docSnap.data().macroGoals) {
-                        macroGoals = docSnap.data().macroGoals;
-                        renderApp();
-                    }
-                }, (error) => { console.error("Error fetching macro goals:", error); });
-
-                const mealsColRef = collection(db, `/artifacts/${appId}/users/${userId}/meals`);
-                onSnapshot(mealsColRef, (snapshot) => {
-                    const newMeals = [];
-                    let totalProtein = 0;
-                    let totalCarbs = 0;
-                    let totalFat = 0;
-                    snapshot.forEach(doc => {
-                        const meal = doc.data();
-                        newMeals.push({ id: doc.id, ...meal });
-                        totalProtein += meal.protein;
-                        totalCarbs += meal.carbs;
-                        totalFat += meal.fat;
-                    });
-                    newMeals.sort((a, b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
-                    meals = newMeals;
-                    dailyMacros = { protein: totalProtein, carbs: totalCarbs, fat: totalFat };
-                    renderApp();
-                }, (error) => { console.error("Error fetching meals:", error); });
-
-                const weightsColRef = collection(db, `/artifacts/${appId}/users/${userId}/weights`);
-                onSnapshot(weightsColRef, (snapshot) => {
-                    const newWeights = [];
-                    snapshot.forEach(doc => newWeights.push({ id: doc.id, ...doc.data() }));
-                    weightLog = newWeights;
-                    renderApp();
-                }, (error) => { console.error("Error fetching weights:", error); });
-                
-                const measurementsColRef = collection(db, `/artifacts/${appId}/users/${userId}/measurements`);
-                onSnapshot(measurementsColRef, (snapshot) => {
-                    const newMeasurements = [];
-                    snapshot.forEach(doc => newMeasurements.push({ id: doc.id, ...doc.data() }));
-                    measurementsLog = newMeasurements;
-                    renderApp();
-                }, (error) => { console.error("Error fetching measurements:", error); });
+                if (measurementsLog.length > 1) {
+                    const sortedLog = [...measurementsLog].sort((a, b) => new Date(a.date) - new Date(b.date));
+                    const labels = sortedLog.map(log => log.date);
+                    const datasets = [
+                        { label: 'Chest (in)', data: sortedLog.map(log => log.chest), borderColor: '#a78bfa', backgroundColor: 'rgba(167, 139, 250, 0.2)', pointBackgroundColor: '#a78bfa', pointHoverBorderColor: '#a78bfa' },
+                        { label: 'Waist (in)', data: sortedLog.map(log => log.waist), borderColor: '#8b5cf6', backgroundColor: 'rgba(139, 92, 246, 0.2)', pointBackgroundColor: '#8b5cf6', pointHoverBorderColor: '#8b5cf6' },
+                        { label: 'Thigh (in)', data: sortedLog.map(log => log.thigh), borderColor: '#6d28d9', backgroundColor: 'rgba(109, 40, 217, 0.2)', pointBackgroundColor: '#6d28d9', pointHoverBorderColor: '#6d28d9' }
+                    ];
+                    createLineChart('measurementsChart', datasets, labels);
+                } else {
+                    const chartContainer = document.getElementById('measurementsChart').parentElement;
+                    chartContainer.innerHTML = `<div class="text-center text-gray-400 p-4">Log at least two entries to see a chart.</div>`;
+                }
             }
-        });
+        }
+        
+        // Expose functions to the global scope for onclick events
+        window.showView = (newView) => {
+            view = newView;
+            renderApp();
+        };
+        window.handleUpdateMacroGoals = handleUpdateMacroGoals;
+        window.handleAddMeal = handleAddMeal;
+        window.handleAddWeight = handleAddWeight;
+        window.handleAddMeasurements = handleAddMeasurements;
+
+        // Initial render call
+        renderApp();
     </script>
 </body>
 </html>
