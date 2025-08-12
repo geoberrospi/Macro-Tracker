@@ -24,6 +24,32 @@
         .progress-bar-container {
             background-color: #333;
         }
+        /* Custom modal styles */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.7);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+        .modal {
+            background-color: #1E1E1E;
+            padding: 24px;
+            border-radius: 8px;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.25);
+            text-align: center;
+            max-width: 400px;
+            width: 90%;
+            border: 1px solid #333;
+        }
+        .modal.error {
+            border-color: #ff4d4f;
+        }
     </style>
 </head>
 <body class="bg-gray-900 text-gray-100 min-h-screen flex items-center justify-center p-4">
@@ -116,7 +142,7 @@
         <div class="card p-6 rounded-lg shadow-lg">
             <h2 class="text-3xl font-bold text-red-400 mb-4">Weight Tracker</h2>
             <form id="add-weight-form" class="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-4 mb-6">
-                <input type="number" id="weight-input" placeholder="Weight (kg/lbs)" required class="flex-1 p-3 rounded-md bg-gray-800 border border-gray-700 focus:outline-none focus:ring-2 focus:ring-red-500">
+                <input type="number" id="weight-input" placeholder="Weight (lbs)" required class="flex-1 p-3 rounded-md bg-gray-800 border border-gray-700 focus:outline-none focus:ring-2 focus:ring-red-500">
                 <input type="date" id="weight-date" required class="flex-1 p-3 rounded-md bg-gray-800 border border-gray-700 focus:outline-none focus:ring-2 focus:ring-red-500">
                 <button type="submit" class="p-3 bg-red-600 rounded-md hover:bg-red-700 transition-colors duration-200 font-bold">Add Weight</button>
             </form>
@@ -129,9 +155,9 @@
         <div class="card p-6 rounded-lg shadow-lg">
             <h2 class="text-3xl font-bold text-yellow-400 mb-4">Measurement Tracker</h2>
             <form id="add-measurement-form" class="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-4 mb-6">
-                <input type="number" id="chest-input" placeholder="Chest (cm/in)" required class="flex-1 p-3 rounded-md bg-gray-800 border border-gray-700 focus:outline-none focus:ring-2 focus:ring-yellow-500">
-                <input type="number" id="waist-input" placeholder="Waist (cm/in)" required class="flex-1 p-3 rounded-md bg-gray-800 border border-gray-700 focus:outline-none focus:ring-2 focus:ring-yellow-500">
-                <input type="number" id="thigh-input" placeholder="Thigh (cm/in)" required class="flex-1 p-3 rounded-md bg-gray-800 border border-gray-700 focus:outline-none focus:ring-2 focus:ring-yellow-500">
+                <input type="number" id="chest-input" placeholder="Chest (in)" required class="flex-1 p-3 rounded-md bg-gray-800 border border-gray-700 focus:outline-none focus:ring-2 focus:ring-yellow-500">
+                <input type="number" id="waist-input" placeholder="Waist (in)" required class="flex-1 p-3 rounded-md bg-gray-800 border border-gray-700 focus:outline-none focus:ring-2 focus:ring-yellow-500">
+                <input type="number" id="thigh-input" placeholder="Thigh (in)" required class="flex-1 p-3 rounded-md bg-gray-800 border border-gray-700 focus:outline-none focus:ring-2 focus:ring-yellow-500">
                 <input type="date" id="measurement-date" required class="flex-1 p-3 rounded-md bg-gray-800 border border-gray-700 focus:outline-none focus:ring-2 focus:ring-yellow-500">
                 <button type="submit" class="p-3 bg-yellow-600 rounded-md hover:bg-yellow-700 transition-colors duration-200 font-bold">Add Measurement</button>
             </form>
@@ -145,7 +171,7 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, getDoc, setDoc, onSnapshot, collection, query, orderBy, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, doc, getDoc, setDoc, onSnapshot, collection, query, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // Firebase Initialization and Authentication
         const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
@@ -161,32 +187,16 @@
 
         // Custom modal function to replace alert()
         function showModal(message, type = 'info') {
-            const modal = document.createElement('div');
-            modal.style.cssText = `
-                position: fixed;
-                top: 50%;
-                left: 50%;
-                transform: translate(-50%, -50%);
-                padding: 20px;
-                background-color: #1E1E1E;
-                color: white;
-                border-radius: 8px;
-                box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-                z-index: 1000;
-                text-align: center;
-                border: 1px solid #333;
-                max-width: 90%;
+            const modalOverlay = document.createElement('div');
+            modalOverlay.className = 'modal-overlay';
+            modalOverlay.innerHTML = `
+                <div class="modal ${type === 'error' ? 'error' : ''}">
+                    <p>${message}</p>
+                    <button class="mt-4 p-2 bg-blue-600 rounded-md hover:bg-blue-700 transition-colors duration-200 font-bold" onclick="this.parentElement.parentElement.remove()">OK</button>
+                </div>
             `;
-            if (type === 'error') {
-                modal.style.border = '1px solid #ff4d4f';
-            }
-            modal.innerHTML = `
-                <p>${message}</p>
-                <button onclick="this.parentElement.remove()" style="margin-top: 10px; padding: 5px 15px; background-color: #6c5ce7; border: none; border-radius: 4px; cursor: pointer;">OK</button>
-            `;
-            document.body.appendChild(modal);
+            document.body.appendChild(modalOverlay);
         }
-        window.showModal = showModal; // Make it globally accessible for the button
 
         // Sign in anonymously or with custom token
         onAuthStateChanged(auth, async (user) => {
@@ -235,7 +245,7 @@
                 data: {
                     labels: labels,
                     datasets: [{
-                        label: 'Weight (kg/lbs)',
+                        label: 'Weight (lbs)',
                         data: values,
                         borderColor: '#f87171',
                         backgroundColor: 'rgba(248, 113, 113, 0.2)',
@@ -255,7 +265,7 @@
                             grid: { color: '#333' }
                         },
                         y: {
-                            title: { display: true, text: 'Weight' },
+                            title: { display: true, text: 'Weight (lbs)' },
                             ticks: { color: '#E0E0E0' },
                             grid: { color: '#333' }
                         }
@@ -322,7 +332,7 @@
                             grid: { color: '#333' }
                         },
                         y: {
-                            title: { display: true, text: 'Measurement (cm/in)' },
+                            title: { display: true, text: 'Measurement (in)' },
                             ticks: { color: '#E0E0E0' },
                             grid: { color: '#333' }
                         }
@@ -517,6 +527,12 @@
             const weight = parseFloat(document.getElementById('weight-input').value);
             const date = document.getElementById('weight-date').value;
 
+            // Check if weight is a valid number
+            if (isNaN(weight)) {
+                showModal("Please enter a valid number for weight.", 'error');
+                return;
+            }
+
             try {
                 const weightColRef = collection(db, 'artifacts', appId, 'users', userId, 'weight');
                 await addDoc(weightColRef, {
@@ -543,6 +559,12 @@
             const waist = parseFloat(document.getElementById('waist-input').value);
             const thigh = parseFloat(document.getElementById('thigh-input').value);
             const date = document.getElementById('measurement-date').value;
+            
+            // Check if measurements are valid numbers
+            if (isNaN(chest) || isNaN(waist) || isNaN(thigh)) {
+                showModal("Please enter valid numbers for all measurements.", 'error');
+                return;
+            }
 
             try {
                 const measurementColRef = collection(db, 'artifacts', appId, 'users', userId, 'measurements');
