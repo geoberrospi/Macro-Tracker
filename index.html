@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Personal Fitness Tracker</title>
+    <title>Personal Fitness Dashboard</title>
     <!-- Tailwind CSS for styling -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Chart.js for charts -->
@@ -41,6 +41,26 @@
             height: 300px;
             width: 100%;
         }
+        .message-box {
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 100;
+            padding: 1rem 2rem;
+            border-radius: 0.5rem;
+            background-color: #8b5cf6;
+            color: white;
+            font-weight: bold;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            animation: fadeinout 4s forwards;
+        }
+        @keyframes fadeinout {
+            0% { opacity: 0; }
+            10% { opacity: 1; }
+            90% { opacity: 1; }
+            100% { opacity: 0; display: none; }
+        }
     </style>
 </head>
 <body class="bg-gray-950 text-gray-200">
@@ -48,22 +68,24 @@
         <!-- Loading state initially -->
         <div id="loading" class="flex flex-col items-center text-purple-300">
             <div class="loading-animation mb-4"></div>
-            <p>Loading your data...</p>
+            <p>Loading your personal dashboard...</p>
         </div>
     </div>
+    <!-- Message box for user feedback, hidden by default -->
+    <div id="messageBox" class="hidden message-box"></div>
 
     <script type="module">
         // Import necessary Firebase libraries
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, setDoc, collection, onSnapshot, addDoc, query, serverTimestamp, getDoc, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, doc, setDoc, collection, onSnapshot, addDoc, query, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         
-        // --- FIREBASE CONFIGURATION (USING ENVIRONMENT VARIABLES) ---
+        // --- GLOBAL VARIABLES (Provided by the Canvas environment) ---
         const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
-        // Global state variables
+        // --- APPLICATION STATE ---
         let user = null;
         let view = 'dashboard';
         let macroGoals = { protein: 137, carbs: 307, fat: 106 };
@@ -71,13 +93,12 @@
         let meals = [];
         let weightLog = [];
         let measurementsLog = [];
-        let message = '';
         const root = document.getElementById('root');
+        const messageBox = document.getElementById('messageBox');
         let unsubscribeListeners = [];
 
-        // Initialize Firebase services
+        // --- FIREBASE INITIALIZATION & AUTHENTICATION ---
         let app, auth, db;
-        
         try {
             app = initializeApp(firebaseConfig);
             auth = getAuth(app);
@@ -87,13 +108,35 @@
             root.innerHTML = `<div class="p-4 text-center text-red-400">Error initializing Firebase. Please try again.</div>`;
         }
         
-        function showMessage(msg) {
-            message = msg;
-            renderApp();
-            setTimeout(() => {
-                message = '';
+        // Listen for authentication state changes
+        onAuthStateChanged(auth, async (currentUser) => {
+            if (currentUser) {
+                user = currentUser;
+                // Once authenticated, set up real-time data listeners
+                setupDataListeners(user.uid);
                 renderApp();
-            }, 3000);
+            } else {
+                // If not authenticated, try to sign in.
+                try {
+                    if (initialAuthToken) {
+                        await signInWithCustomToken(auth, initialAuthToken);
+                    } else {
+                        await signInAnonymously(auth);
+                    }
+                } catch (error) {
+                    console.error("Authentication failed:", error);
+                    root.innerHTML = `<div class="p-4 text-center text-red-400">Authentication failed. Please check your network connection and try again.</div>`;
+                }
+            }
+        });
+        
+        // --- UI HELPER FUNCTIONS ---
+        function showMessage(msg) {
+            messageBox.textContent = msg;
+            messageBox.classList.remove('hidden');
+            setTimeout(() => {
+                messageBox.classList.add('hidden');
+            }, 4000);
         }
 
         function calculateCountdown(targetDate) {
@@ -108,97 +151,51 @@
             return { days, hours, minutes, seconds };
         }
 
-        // Fetch initial data once using getDocs/getDoc, then setup real-time listeners.
-        async function fetchInitialData(userId) {
-            try {
-                // Fetch macro goals
-                const userDocRef = doc(db, `artifacts/${appId}/users/${userId}`);
-                const macroGoalsDoc = await getDoc(userDocRef);
-                if (macroGoalsDoc.exists() && macroGoalsDoc.data().macroGoals) {
-                    macroGoals = macroGoalsDoc.data().macroGoals;
-                }
-
-                // Fetch meals
-                const mealsSnapshot = await getDocs(query(collection(db, `artifacts/${appId}/users/${userId}/meals`)));
-                meals = mealsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                const today = new Date().toISOString().split('T')[0];
-                dailyMacros.protein = meals.filter(m => m.timestamp && m.timestamp.toDate().toISOString().split('T')[0] === today).reduce((sum, m) => sum + m.protein, 0);
-                dailyMacros.carbs = meals.filter(m => m.timestamp && m.timestamp.toDate().toISOString().split('T')[0] === today).reduce((sum, m) => sum + m.carbs, 0);
-                dailyMacros.fat = meals.filter(m => m.timestamp && m.timestamp.toDate().toISOString().split('T')[0] === today).reduce((sum, m) => sum + m.fat, 0);
-                meals.sort((a, b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
-
-                // Fetch weight logs
-                const weightsSnapshot = await getDocs(query(collection(db, `artifacts/${appId}/users/${userId}/weights`)));
-                weightLog = weightsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                weightLog.sort((a, b) => new Date(a.date) - new Date(b.date));
-
-                // Fetch measurements
-                const measurementsSnapshot = await getDocs(query(collection(db, `artifacts/${appId}/users/${userId}/measurements`)));
-                measurementsLog = measurementsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                measurementsLog.sort((a, b) => new Date(a.date) - new Date(b.date));
-
-            } catch (e) {
-                console.error("Error fetching initial data:", e);
-                throw e; // Propagate the error so the main function can handle it
-            }
-        }
-        
-        // Setup real-time listeners after initial data is loaded
+        // --- DATA MANAGEMENT FUNCTIONS ---
         function setupDataListeners(userId) {
+            // Clear previous listeners to avoid duplicates
             unsubscribeListeners.forEach(unsubscribe => unsubscribe());
             unsubscribeListeners = [];
             
+            // Listener for Macro Goals
             const userDocRef = doc(db, `artifacts/${appId}/users/${userId}`);
             unsubscribeListeners.push(onSnapshot(userDocRef, (doc) => {
                 if (doc.exists() && doc.data().macroGoals) {
                     macroGoals = doc.data().macroGoals;
                 }
                 renderApp();
-            }));
+            }, (e) => console.error("Error fetching macro goals:", e)));
 
+            // Listener for Meals
             const mealsColRef = query(collection(db, `artifacts/${appId}/users/${userId}/meals`));
             unsubscribeListeners.push(onSnapshot(mealsColRef, (snapshot) => {
-                meals = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a, b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
+                meals = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                meals.sort((a, b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
                 const today = new Date().toISOString().split('T')[0];
                 dailyMacros.protein = meals.filter(m => m.timestamp && m.timestamp.toDate().toISOString().split('T')[0] === today).reduce((sum, m) => sum + m.protein, 0);
                 dailyMacros.carbs = meals.filter(m => m.timestamp && m.timestamp.toDate().toISOString().split('T')[0] === today).reduce((sum, m) => sum + m.carbs, 0);
                 dailyMacros.fat = meals.filter(m => m.timestamp && m.timestamp.toDate().toISOString().split('T')[0] === today).reduce((sum, m) => sum + m.fat, 0);
                 renderApp();
-            }));
+            }, (e) => console.error("Error fetching meals:", e)));
 
+            // Listener for Weights
             const weightsColRef = query(collection(db, `artifacts/${appId}/users/${userId}/weights`));
             unsubscribeListeners.push(onSnapshot(weightsColRef, (snapshot) => {
-                weightLog = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a, b) => new Date(a.date) - new Date(b.date));
+                weightLog = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                weightLog.sort((a, b) => new Date(a.date) - new Date(b.date));
                 renderApp();
-            }));
+            }, (e) => console.error("Error fetching weights:", e)));
 
+            // Listener for Measurements
             const measurementsColRef = query(collection(db, `artifacts/${appId}/users/${userId}/measurements`));
             unsubscribeListeners.push(onSnapshot(measurementsColRef, (snapshot) => {
-                measurementsLog = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a, b) => new Date(a.date) - new Date(b.date));
+                measurementsLog = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                measurementsLog.sort((a, b) => new Date(a.date) - new Date(b.date));
                 renderApp();
-            }));
+            }, (e) => console.error("Error fetching measurements:", e)));
         }
         
-        // Use a self-invoking async function to handle initial authentication and data load
-        (async () => {
-            try {
-                if (initialAuthToken) {
-                    await signInWithCustomToken(auth, initialAuthToken);
-                } else {
-                    await signInAnonymously(auth);
-                }
-                user = auth.currentUser;
-
-                // After a user is authenticated, fetch the initial data and then render.
-                await fetchInitialData(user.uid);
-                setupDataListeners(user.uid); // Attach real-time listeners after initial data fetch
-                renderApp(); // Initial render
-            } catch (e) {
-                console.error("Critical error during authentication or data load:", e);
-                root.innerHTML = `<div class="p-4 text-center text-red-400">Authentication failed. Please try again later.</div>`;
-            }
-        })();
-
+        // --- FORM HANDLERS ---
         async function handleUpdateMacroGoals(e) {
             e.preventDefault();
             const form = e.target;
@@ -223,7 +220,7 @@
             const protein = Number(form.protein.value);
             const carbs = Number(form.carbs.value);
             const fat = Number(form.fat.value);
-            if (!name || !protein || !carbs || !fat) { showMessage('Please fill out all meal fields.'); return; }
+            if (!name || isNaN(protein) || isNaN(carbs) || isNaN(fat)) { showMessage('Please fill out all meal fields with valid numbers.'); return; }
             if (!user) { showMessage('Authentication not complete. Please wait.'); return; }
             try {
                 const mealsColRef = collection(db, `artifacts/${appId}/users/${user.uid}/meals`);
@@ -241,7 +238,7 @@
             const form = e.target;
             const weight = Number(form.weight.value);
             const date = form.date.value;
-            if (!weight || !date) { showMessage('Please enter a weight and select a date.'); return; }
+            if (isNaN(weight) || !date) { showMessage('Please enter a valid weight and select a date.'); return; }
             if (!user) { showMessage('Authentication not complete. Please wait.'); return; }
             try {
                 const weightsColRef = collection(db, `artifacts/${appId}/users/${user.uid}/weights`);
@@ -261,7 +258,7 @@
             const chest = Number(form.chest.value);
             const waist = Number(form.waist.value);
             const thigh = Number(form.thigh.value);
-            if (!chest || !waist || !thigh || !date) { showMessage('Please enter all measurements and a date.'); return; }
+            if (isNaN(chest) || isNaN(waist) || isNaN(thigh) || !date) { showMessage('Please enter valid measurements and a date.'); return; }
             if (!user) { showMessage('Authentication not complete. Please wait.'); return; }
             try {
                 const measurementsColRef = collection(db, `artifacts/${appId}/users/${user.uid}/measurements`);
@@ -274,6 +271,41 @@
             }
         }
 
+        function checkAffordance() {
+            const form = document.getElementById('checkAffordanceForm');
+            const protein = Number(form.affordProtein.value);
+            const carbs = Number(form.affordCarbs.value);
+            const fat = Number(form.affordFat.value);
+            const resultEl = document.getElementById('affordanceResult');
+            
+            const remainingProtein = macroGoals.protein - dailyMacros.protein;
+            const remainingCarbs = macroGoals.carbs - dailyMacros.carbs;
+            const remainingFat = macroGoals.fat - dailyMacros.fat;
+
+            let canAfford = true;
+            let messageParts = [];
+
+            if (protein > remainingProtein) {
+                canAfford = false;
+                messageParts.push(`Protein: need ${Math.abs(remainingProtein - protein)}g more`);
+            }
+            if (carbs > remainingCarbs) {
+                canAfford = false;
+                messageParts.push(`Carbs: need ${Math.abs(remainingCarbs - carbs)}g more`);
+            }
+            if (fat > remainingFat) {
+                canAfford = false;
+                messageParts.push(`Fat: need ${Math.abs(remainingFat - fat)}g more`);
+            }
+
+            if (canAfford) {
+                resultEl.innerHTML = `<span class="text-green-400">✅ Yes, you can afford this meal!</span>`;
+            } else {
+                resultEl.innerHTML = `<span class="text-red-400">❌ No, you can't afford this meal.</span><p class="text-gray-400 text-sm mt-1">${messageParts.join(', ')}</p>`;
+            }
+        }
+
+        // --- CHARTING FUNCTIONS ---
         function createLineChart(canvasId, datasets, labels) {
             const ctx = document.getElementById(canvasId);
             if (!ctx) return;
@@ -300,9 +332,7 @@
                     maintainAspectRatio: false,
                     plugins: {
                         legend: {
-                            labels: {
-                                color: '#e5e7eb'
-                            }
+                            labels: { color: '#e5e7eb' }
                         }
                     },
                     scales: {
@@ -321,17 +351,18 @@
             });
         }
 
+        // --- VIEW RENDERING FUNCTIONS ---
         function renderDashboard() {
             return `
                 <div class="space-y-6 max-w-4xl mx-auto">
                     <div class="text-center">
-                        <h2 class="text-4xl font-bold text-purple-400">Countdown & Gains</h2>
+                        <h2 class="text-4xl font-bold text-purple-400">Dashboard</h2>
                         <p class="text-gray-400 mt-1">Your personal dashboard for wedding prep and fitness goals.</p>
-                        <p class="text-xs text-gray-500 mt-2">User ID: ${user.uid}</p>
+                        <p class="text-xs text-gray-500 mt-2">User ID: <span class="break-all">${user.uid}</span></p>
                     </div>
                     <div class="flex flex-col md:flex-row space-y-4 md:space-y-0 md:space-x-4">
-                        ${createCountdownElement("2025-12-29T00:00:00", "Time until Wedding")}
-                        ${createCountdownElement("2025-10-31T00:00:00", "Time until Josh's Wedding")}
+                        ${createCountdownElement("2025-12-29T00:00:00", "Time until wedding")}
+                        ${createCountdownElement("2025-10-31T00:00:00", "Time until Josh wedding")}
                     </div>
                     <div class="rounded-xl shadow-md p-6 card">
                         <div class="flex justify-between items-center mb-4">
@@ -360,7 +391,7 @@
                             </div>
                         </div>
                     </div>
-                     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <div class="rounded-xl shadow-md p-6 card">
                             <div class="flex justify-between items-center mb-4">
                                 <h3 class="text-xl font-semibold flex items-center text-purple-300">
@@ -370,7 +401,7 @@
                                     <i class="fas fa-chart-line"></i>
                                 </button>
                             </div>
-                            <p class="text-gray-400">Log your progress over time.</p>
+                            <p class="text-gray-400">Log your weight and view your progress chart.</p>
                         </div>
                         <div class="rounded-xl shadow-md p-6 card">
                             <div class="flex justify-between items-center mb-4">
@@ -381,7 +412,7 @@
                                     <i class="fas fa-chart-bar"></i>
                                 </button>
                             </div>
-                            <p class="text-gray-400">Track key body measurements.</p>
+                            <p class="text-gray-400">Track chest, waist, and thigh measurements.</p>
                         </div>
                     </div>
                 </div>
@@ -418,7 +449,6 @@
         }
 
         function renderMacros() {
-            const messageEl = message ? `<div class="p-3 bg-purple-900 text-purple-200 rounded-lg text-sm text-center card">${message}</div>` : '';
             const mealsListHtml = meals.map(meal => {
                 const mealDate = meal.timestamp ? meal.timestamp.toDate().toLocaleDateString() : 'N/A';
                 const mealTime = meal.timestamp ? meal.timestamp.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
@@ -443,7 +473,6 @@
                             <i class="fas fa-times"></i>
                         </button>
                     </div>
-                    ${messageEl}
                     <div class="rounded-xl shadow-md p-6 card">
                         <h3 class="text-lg font-semibold flex items-center text-purple-300 mb-4">
                             <i class="fas fa-utensils mr-2"></i> Today's Macro Progress
@@ -481,38 +510,38 @@
                             </div>
                         </div>
                     </div>
-                    <div class="rounded-xl p-4 bg-gray-800 mb-4">
-                        <h4 class="font-semibold text-gray-300 flex items-center mb-2">
-                            <i class="fas fa-plus-circle text-purple-400 mr-2"></i> Add a Meal
-                        </h4>
-                        <form id="addMealForm" class="flex flex-col space-y-2">
-                            <input name="mealName" type="text" placeholder="Meal Name (e.g., Chicken Salad)" class="w-full border border-gray-700 bg-gray-900 rounded-md p-2 text-gray-200" />
-                            <div class="grid grid-cols-3 gap-2">
-                                <input name="protein" type="number" placeholder="Protein (g)" class="w-full border border-gray-700 bg-gray-900 rounded-md p-2 text-gray-200" />
-                                <input name="carbs" type="number" placeholder="Carbs (g)" class="w-full border border-gray-700 bg-gray-900 rounded-md p-2 text-gray-200" />
-                                <input name="fat" type="number" placeholder="Fat (g)" class="w-full border border-gray-700 bg-gray-900 rounded-md p-2 text-gray-200" />
-                            </div>
-                            <button type="submit" class="w-full bg-purple-600 text-white rounded-md py-2 hover:bg-purple-700 transition duration-300">Log Meal</button>
-                        </form>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div class="rounded-xl p-4 bg-gray-800">
+                            <h4 class="font-semibold text-gray-300 flex items-center mb-2">
+                                <i class="fas fa-plus-circle text-purple-400 mr-2"></i> Add a Meal
+                            </h4>
+                            <form id="addMealForm" class="flex flex-col space-y-2">
+                                <input name="mealName" type="text" placeholder="Meal Name (e.g., Chicken Salad)" class="w-full border border-gray-700 bg-gray-900 rounded-md p-2 text-gray-200" />
+                                <div class="grid grid-cols-3 gap-2">
+                                    <input name="protein" type="number" placeholder="Protein (g)" class="w-full border border-gray-700 bg-gray-900 rounded-md p-2 text-gray-200" />
+                                    <input name="carbs" type="number" placeholder="Carbs (g)" class="w-full border border-gray-700 bg-gray-900 rounded-md p-2 text-gray-200" />
+                                    <input name="fat" type="number" placeholder="Fat (g)" class="w-full border border-gray-700 bg-gray-900 rounded-md p-2 text-gray-200" />
+                                </div>
+                                <button type="submit" class="w-full bg-purple-600 text-white rounded-md py-2 hover:bg-purple-700 transition duration-300">Log Meal</button>
+                            </form>
+                        </div>
+                        <div class="rounded-xl p-4 bg-gray-800">
+                            <h4 class="font-semibold text-gray-300 flex items-center mb-2">
+                                <i class="fas fa-search-plus text-purple-400 mr-2"></i> Can I Afford This Meal?
+                            </h4>
+                            <p class="text-sm text-gray-400 mb-2">Enter the macros for a meal to see if you have enough remaining.</p>
+                            <form id="checkAffordanceForm" class="flex flex-col space-y-2">
+                                <div class="grid grid-cols-3 gap-2">
+                                    <input name="affordProtein" type="number" placeholder="Protein (g)" class="w-full border border-gray-700 bg-gray-900 rounded-md p-2 text-gray-200" />
+                                    <input name="affordCarbs" type="number" placeholder="Carbs (g)" class="w-full border border-gray-700 bg-gray-900 rounded-md p-2 text-gray-200" />
+                                    <input name="affordFat" type="number" placeholder="Fat (g)" class="w-full border border-gray-700 bg-gray-900 rounded-md p-2 text-gray-200" />
+                                </div>
+                                <button type="button" onclick="checkAffordance()" class="w-full bg-purple-600 text-white rounded-md py-2 hover:bg-purple-700 transition duration-300">Check</button>
+                                <div id="affordanceResult" class="mt-2 text-center text-sm"></div>
+                            </form>
+                        </div>
                     </div>
-                    
-                    <div class="rounded-xl p-4 bg-gray-800 mb-4">
-                        <h4 class="font-semibold text-gray-300 flex items-center mb-2">
-                            <i class="fas fa-search-plus text-purple-400 mr-2"></i> Can I Afford This Meal?
-                        </h4>
-                        <p class="text-sm text-gray-400 mb-2">Enter the macros for a meal to see if you have enough remaining.</p>
-                        <form id="checkAffordanceForm" class="flex flex-col space-y-2">
-                            <div class="grid grid-cols-3 gap-2">
-                                <input name="affordProtein" type="number" placeholder="Protein (g)" class="w-full border border-gray-700 bg-gray-900 rounded-md p-2 text-gray-200" />
-                                <input name="affordCarbs" type="number" placeholder="Carbs (g)" class="w-full border border-gray-700 bg-gray-900 rounded-md p-2 text-gray-200" />
-                                <input name="affordFat" type="number" placeholder="Fat (g)" class="w-full border border-gray-700 bg-gray-900 rounded-md p-2 text-gray-200" />
-                            </div>
-                            <button type="button" onclick="checkAffordance()" class="w-full bg-purple-600 text-white rounded-md py-2 hover:bg-purple-700 transition duration-300">Check</button>
-                            <div id="affordanceResult" class="mt-2 text-center text-sm"></div>
-                        </form>
-                    </div>
-
-                    <div class="rounded-xl p-4 bg-gray-800 mb-4">
+                    <div class="rounded-xl p-4 bg-gray-800">
                         <h4 class="font-semibold text-gray-300 flex items-center mb-2">
                             <i class="fas fa-list-ul text-purple-400 mr-2"></i> Logged Meals
                         </h4>
@@ -538,42 +567,7 @@
             `;
         }
         
-        function checkAffordance() {
-            const form = document.getElementById('checkAffordanceForm');
-            const protein = Number(form.affordProtein.value);
-            const carbs = Number(form.affordCarbs.value);
-            const fat = Number(form.affordFat.value);
-            const resultEl = document.getElementById('affordanceResult');
-            
-            const remainingProtein = macroGoals.protein - dailyMacros.protein;
-            const remainingCarbs = macroGoals.carbs - dailyMacros.carbs;
-            const remainingFat = macroGoals.fat - dailyMacros.fat;
-
-            let canAfford = true;
-            let messageParts = [];
-
-            if (protein > remainingProtein) {
-                canAfford = false;
-                messageParts.push(`Protein: need ${protein - remainingProtein}g more`);
-            }
-            if (carbs > remainingCarbs) {
-                canAfford = false;
-                messageParts.push(`Carbs: need ${carbs - remainingCarbs}g more`);
-            }
-            if (fat > remainingFat) {
-                canAfford = false;
-                messageParts.push(`Fat: need ${fat - remainingFat}g more`);
-            }
-
-            if (canAfford) {
-                resultEl.innerHTML = `<span class="text-green-400">Yes, you can afford this meal!</span>`;
-            } else {
-                resultEl.innerHTML = `<span class="text-red-400">No, you can't afford this meal.</span><p class="text-gray-400 text-sm mt-1">${messageParts.join(', ')}</p>`;
-            }
-        }
-
         function renderWeights() {
-            const messageEl = message ? `<div class="p-3 bg-purple-900 text-purple-200 rounded-lg text-sm text-center card">${message}</div>` : '';
             const labels = weightLog.map(log => log.date);
             const data = weightLog.map(log => log.weight);
             const datasets = [{ label: 'Weight (lbs)', data: data, borderColor: '#8b5cf6', pointBackgroundColor: '#8b5cf6', pointHoverBorderColor: '#8b5cf6' }];
@@ -589,7 +583,6 @@
                             <i class="fas fa-times"></i>
                         </button>
                     </div>
-                    ${messageEl}
                     <div class="rounded-xl shadow-md p-6 card">
                         <h3 class="text-lg font-semibold flex items-center text-purple-300 mb-4">
                             <i class="fas fa-chart-line mr-2"></i> Weight Progress
@@ -621,7 +614,6 @@
         }
         
         function renderMeasurements() {
-            const messageEl = message ? `<div class="p-3 bg-purple-900 text-purple-200 rounded-lg text-sm text-center card">${message}</div>` : '';
             const labels = measurementsLog.map(log => log.date);
             const datasets = [
                 { label: 'Chest (in)', data: measurementsLog.map(log => log.chest), borderColor: '#f9a8d4', backgroundColor: 'rgba(249, 168, 212, 0.2)', pointBackgroundColor: '#f9a8d4', pointHoverBorderColor: '#f9a8d4' },
@@ -640,7 +632,6 @@
                             <i class="fas fa-times"></i>
                         </button>
                     </div>
-                    ${messageEl}
                     <div class="rounded-xl shadow-md p-6 card">
                         <h3 class="text-lg font-semibold flex items-center text-purple-300 mb-4">
                             <i class="fas fa-chart-bar mr-2"></i> Measurements Progress
@@ -673,9 +664,14 @@
             `;
         }
 
-        // Main rendering function
+        // --- MAIN APPLICATION LOGIC ---
         async function renderApp() {
-            root.innerHTML = '';
+            // Wait for user to be authenticated before rendering content
+            if (!user) {
+                root.innerHTML = `<div class="p-4 text-center text-gray-400"><div class="loading-animation mx-auto mb-4"></div>Authenticating user...</div>`;
+                return;
+            }
+            root.innerHTML = ''; // Clear loading state
             let content = '';
             switch(view) {
                 case 'dashboard':
@@ -695,12 +691,14 @@
             }
             root.innerHTML = content;
             attachEventListeners();
-            if (view === 'weights') {
+            
+            // Render charts after the HTML elements are in the DOM
+            if (view === 'weights' && weightLog.length > 0) {
                 const labels = weightLog.map(log => log.date);
                 const data = weightLog.map(log => log.weight);
                 createLineChart('weightChart', [{ label: 'Weight (lbs)', data: data }], labels);
             }
-            if (view === 'measurements') {
+            if (view === 'measurements' && measurementsLog.length > 0) {
                 const labels = measurementsLog.map(log => log.date);
                 const datasets = [
                     { label: 'Chest (in)', data: measurementsLog.map(log => log.chest), borderColor: '#f9a8d4', pointBackgroundColor: '#f9a8d4', pointHoverBorderColor: '#f9a8d4' },
@@ -734,18 +732,25 @@
         // Set up the countdown timer on the dashboard
         setInterval(() => {
             if (view === 'dashboard' && root) {
-                const countdownElements = root.querySelectorAll('[data-countdown-days]');
-                countdownElements.forEach(el => {
-                    const targetDate = el.dataset.countdownDays;
-                    const time = calculateCountdown(targetDate);
-                    const parent = el.parentElement.parentElement;
-                    if (parent) {
-                        parent.innerHTML = createCountdownElement(targetDate, parent.querySelector('h3').textContent.replace('📅', '').trim());
-                    }
-                });
+                const weddingCountdownEl = document.querySelector('[data-countdown-days="2025-12-29T00:00:00"]');
+                const joshCountdownEl = document.querySelector('[data-countdown-days="2025-10-31T00:00:00"]');
+
+                if (weddingCountdownEl) {
+                    const time = calculateCountdown("2025-12-29T00:00:00");
+                    weddingCountdownEl.parentElement.children[0].textContent = time.days;
+                    weddingCountdownEl.parentElement.children[1].textContent = time.hours;
+                    weddingCountdownEl.parentElement.children[2].textContent = time.minutes;
+                    weddingCountdownEl.parentElement.children[3].textContent = time.seconds;
+                }
+                if (joshCountdownEl) {
+                    const time = calculateCountdown("2025-10-31T00:00:00");
+                    joshCountdownEl.parentElement.children[0].textContent = time.days;
+                    joshCountdownEl.parentElement.children[1].textContent = time.hours;
+                    joshCountdownEl.parentElement.children[2].textContent = time.minutes;
+                    joshCountdownEl.parentElement.children[3].textContent = time.seconds;
+                }
             }
         }, 1000);
-        
     </script>
 </body>
 </html>
